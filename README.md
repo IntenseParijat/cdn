@@ -1,25 +1,50 @@
 # Private CDN
 
-## Usage
-Use this RAW link:
+## Recommended Method (Using GitHub Permalink)
 
-How to convert GitHub links into RAW links:
+Instead of manually converting links, you can directly create stable CDN links using GitHub’s **Permalink** feature.
 
-Original:
+This is useful because:
+
+* Links never break after future commits
+* Automatically uses the exact commit hash
+* No need to manually copy hashes
+
+---
+
+# GitHub RAW Links
+
+## Method 1 — Using Permalink (Recommended)
+
+### Step 1
+
+Open the file on GitHub.
+
+---
+
+### Step 2
+
+Click:
 
 ```
-https://github.com/USERNAME/REPO/blob/BRANCH_OR_HASH/path/file.ext
+⋯  →  Copy permalink
 ```
 
-Convert to:
+GitHub will copy a link like this:
 
 ```
-https://raw.githubusercontent.com/USERNAME/REPO/BRANCH_OR_HASH/path/file.ext
+https://github.com/USERNAME/REPO/blob/79942eae3161af4cb0fedc1d76d02a88842750c0/path/file.ext
 ```
 
-Steps:
+Notice that instead of `main`, it now contains a commit hash.
 
-1. Replace:
+---
+
+### Step 3
+
+Convert it into a RAW link:
+
+Replace:
 
 ```
 github.com
@@ -31,24 +56,50 @@ with:
 raw.githubusercontent.com
 ```
 
-2. Remove:
+and remove:
 
 ```
 /blob
 ```
 
-3. Keep everything else the same.
+---
 
-Example:
-
-FROM:
+## Final RAW Link
 
 ```
-https://github.com/user/repo/blob/main/font.woff2
+https://raw.githubusercontent.com/USERNAME/REPO/79942eae3161af4cb0fedc1d76d02a88842750c0/path/file.ext
 ```
 
-TO:
+---
+
+# jsDelivr CDN Links
+
+You can also turn the permalink directly into a jsDelivr CDN link.
+
+---
+
+## jsDelivr Format
 
 ```
-https://raw.githubusercontent.com/user/repo/main/font.woff2
+https://cdn.jsdelivr.net/gh/USERNAME/REPO@COMMIT_HASH/path/file.ext
 ```
+
+---
+
+## Example
+
+### GitHub Permalink
+
+```
+https://github.com/IntenseParijat/cdn/blob/79942eae3161af4cb0fedc1d76d02a88842750c0/music/song.mp3
+```
+
+---
+
+### jsDelivr CDN Link
+
+```
+https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@79942eae3161af4cb0fedc1d76d02a88842750c0/music/song.mp3
+```
+
+* Special characters are automatically URL encoded.
