@@ -5,7 +5,7 @@
         "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/blogger/scripts/playlist.json";
 
     const PLAYER_ID = "parijat-floating-player";
-    const BREAKPOINT = 600;
+    const MOBILE_BREAKPOINT = 768;
     const MARGIN = 16;
 
     const STORAGE = {
@@ -1139,10 +1139,8 @@
 
     function isDesktop() {
 
-        return (
-            window.innerWidth >
-            BREAKPOINT
-        );
+        return window.innerWidth > MOBILE_BREAKPOINT;
+
     }
 
 
@@ -2758,22 +2756,21 @@
     }
 
 
-    if (
-        document.readyState ===
-        "loading"
-    ) {
+    function startPlayer() {
 
-        document.addEventListener(
-            "DOMContentLoaded",
-            init,
-            {
-                once: true
-            }
-        );
-
-    } else {
-
-        init();
+        if (
+            document.readyState === "loading"
+        ) {
+            document.addEventListener(
+                "DOMContentLoaded",
+                init,
+                { once: true }
+            );
+        } else {
+            init();
+        }
     }
+
+    startPlayer();
 
 })();
