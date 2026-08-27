@@ -1,10 +1,12 @@
 (function () {
     "use strict";
 
-    const DESKTOP_BREAKPOINT = 1620;
-
     const PLAYLIST_URL =
         "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/blogger/scripts/playlist.json";
+
+    const PLAYER_ID = "parijat-floating-player";
+    const BREAKPOINT = 600;
+    const MARGIN = 16;
 
     const STORAGE = {
         track: "cyberPlayerTrack",
@@ -18,32 +20,31 @@
         top: "floatingMusicPlayerTop"
     };
 
+    let widget = null;
+    let player = null;
+    let audio = null;
+
+    let playBtn = null;
+    let nextBtn = null;
+    let prevBtn = null;
+    let seekbar = null;
+    let trackTitle = null;
+    let trackArtist = null;
+    let volumeBar = null;
+    let muteBtn = null;
+    let modeBtn = null;
+
+    let minimizeBtn = null;
+    let bubble = null;
+
     let tracks = [];
     let currentTrack = 0;
     let playMode = 0;
-
-    let audio;
-    let playBtn;
-    let nextBtn;
-    let prevBtn;
-    let seekbar;
-    let trackTitle;
-    let trackArtist;
-    let volumeBar;
-    let muteBtn;
-    let modeBtn;
-    let player;
-    let widget;
-
-    let bubble;
-    let minimizeBtn;
-
-    let originalParent = null;
-    let originalNextSibling = null;
-    let desktopMoved = false;
-
     let displayMode = "expanded";
-    let originalDocumentTitle = document.title;
+
+    let originalTitle = document.title;
+
+    let pendingResume = false;
 
     let dragging = false;
     let dragMoved = false;
@@ -56,16 +57,957 @@
 
 
     /* =========================================================
-       HELPERS
+       PLAYER HTML
        ========================================================= */
 
-    function isDesktop() {
-        return window.innerWidth >= DESKTOP_BREAKPOINT;
+    const PLAYER_HTML = `
+    <div class="cyber-player" id="player">
+
+      <div class="glow"></div>
+
+      <div class="top-row">
+
+        <button id="prevBtn">
+          <svg viewBox="0 0 24 24"
+               width="24"
+               height="24"
+               fill="white">
+            <path d="M6 6h2v12H6zm3.5 6L18 18V6z"/>
+          </svg>
+        </button>
+
+        <button id="playBtn">
+          <svg id="playIcon"
+               viewBox="0 0 24 24"
+               width="24"
+               height="24"
+               fill="white">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </button>
+
+        <button id="nextBtn">
+          <svg viewBox="0 0 24 24"
+               width="24"
+               height="24"
+               fill="white">
+            <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/>
+          </svg>
+        </button>
+
+      </div>
+
+      <div class="track-info">
+
+        <div class="track-title" id="trackTitle">
+          LOADING...
+        </div>
+
+        <div class="track-artist" id="trackArtist"></div>
+
+      </div>
+
+      <div class="equalizer">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+
+      <div class="seekbar-container">
+
+        <input
+          type="range"
+          id="seekbar"
+          value="0"
+          min="0"
+          max="100"
+          step="0.01"
+        />
+
+        <button
+          id="modeBtn"
+          class="mode-btn"
+          aria-label="Playback mode">
+        </button>
+
+      </div>
+
+      <div class="volume-container">
+
+        <button
+          id="muteBtn"
+          aria-label="Mute">
+        </button>
+
+        <input
+          type="range"
+          id="volumeBar"
+          min="0"
+          max="1"
+          step="0.01"
+          value="1"
+        />
+
+      </div>
+
+      <audio id="audio"></audio>
+
+    </div>
+  `;
+
+
+    /* =========================================================
+       PLAYER CSS
+       ========================================================= */
+
+    const PLAYER_CSS = `
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap');
+
+    #${PLAYER_ID} {
+      position: fixed;
+
+      top: 85px;
+      right: 32px;
+      left: auto;
+
+      width: 360px;
+      max-width: calc(100vw - 24px);
+
+      margin: 0;
+      padding: 0;
+
+      z-index: 2147483000;
+
+      overflow: visible;
+
+      pointer-events: auto;
+
+      user-select: none;
+      -webkit-user-select: none;
+
+      touch-action: none;
+
+      cursor: grab;
     }
 
-    function number(value, fallback) {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : fallback;
+
+    #${PLAYER_ID}.dragging {
+      cursor: grabbing;
+    }
+
+
+    /* ---------------------------------------------------------
+       MAIN PLAYER
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .cyber-player {
+      box-sizing: border-box;
+
+      position: relative;
+
+      width: 100%;
+      max-width: 360px;
+
+      padding: 20px;
+
+      border-radius: 20px;
+
+      background:
+        linear-gradient(
+          145deg,
+          rgba(20,20,20,0.95),
+          rgba(35,35,35,0.85)
+        );
+
+      border:
+        1px solid
+        rgba(255,115,87,0.25);
+
+      box-shadow:
+        0 0 25px rgba(255,115,87,0.12),
+        inset 0 0 25px rgba(255,255,255,0.03);
+
+      overflow: hidden;
+
+      backdrop-filter: blur(18px);
+
+      pointer-events: auto;
+    }
+
+
+    #${PLAYER_ID} .glow {
+
+      position: absolute;
+
+      inset: 0;
+
+      background:
+        radial-gradient(
+          circle at center,
+          rgba(255,115,87,0.12),
+          transparent 70%
+        );
+
+      opacity: 0;
+
+      transition: 0.5s;
+
+      pointer-events: none;
+    }
+
+
+    #${PLAYER_ID} .cyber-player.playing .glow {
+      opacity: 1;
+    }
+
+
+    /* ---------------------------------------------------------
+       TOP CONTROLS
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .top-row {
+
+      display: flex;
+
+      justify-content: center;
+
+      gap: 16px;
+
+      margin-bottom: 16px;
+    }
+
+
+    #${PLAYER_ID} .top-row button {
+
+      width: 58px;
+      height: 58px;
+
+      border: none;
+
+      border-radius: 50%;
+
+      cursor: pointer !important;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      color: white;
+
+      background:
+        linear-gradient(
+          145deg,
+          #ff7357,
+          #ff512f
+        );
+
+      box-shadow:
+        0 0 18px rgba(255,115,87,0.4);
+
+      transition: 0.25s;
+
+      position: relative;
+
+      z-index: 2;
+
+      pointer-events: auto;
+    }
+
+
+    #${PLAYER_ID} .top-row button:hover {
+
+      transform: scale(1.08);
+
+      box-shadow:
+        0 0 25px rgba(255,115,87,0.8);
+    }
+
+
+    /* ---------------------------------------------------------
+       TRACK INFORMATION
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .track-info {
+
+      width: 100%;
+
+      text-align: center;
+
+      margin-bottom: 18px;
+
+      display: flex;
+
+      flex-direction: column;
+
+      align-items: center;
+    }
+
+
+    #${PLAYER_ID} .track-title {
+
+      color: #ffffff;
+
+      font-family:
+        'Orbitron',
+        sans-serif;
+
+      font-size: 12px;
+
+      letter-spacing: 1.5px;
+
+      text-transform: uppercase;
+
+      line-height: 1.4;
+
+      word-break: break-word;
+
+      overflow-wrap: anywhere;
+    }
+
+
+    #${PLAYER_ID} .track-artist {
+
+      margin-top: 4px;
+
+      color:
+        rgba(255,255,255,.55);
+
+      font-family:
+        'Orbitron',
+        sans-serif;
+
+      font-size: 10px;
+
+      letter-spacing: 1px;
+
+      text-transform: uppercase;
+
+      line-height: 1.3;
+
+      word-break: break-word;
+
+      overflow-wrap: anywhere;
+    }
+
+
+    /* ---------------------------------------------------------
+       EQUALIZER
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .equalizer {
+
+      display: flex;
+
+      justify-content: center;
+
+      align-items: flex-end;
+
+      gap: 5px;
+
+      height: 34px;
+
+      margin-bottom: 18px;
+    }
+
+
+    #${PLAYER_ID} .equalizer span {
+
+      width: 5px;
+
+      border-radius: 20px;
+
+      background: #ff7357;
+
+      box-shadow:
+        0 0 12px
+        rgba(255,115,87,0.8);
+
+      animation:
+        parijat-eq
+        1s infinite ease-in-out;
+
+      animation-play-state:
+        paused;
+    }
+
+
+    #${PLAYER_ID} .cyber-player.playing
+      .equalizer span {
+
+      animation-play-state:
+        running;
+    }
+
+
+    #${PLAYER_ID}
+      .equalizer span:nth-child(1) {
+      animation-delay: 0s;
+    }
+
+    #${PLAYER_ID}
+      .equalizer span:nth-child(2) {
+      animation-delay: .15s;
+    }
+
+    #${PLAYER_ID}
+      .equalizer span:nth-child(3) {
+      animation-delay: .30s;
+    }
+
+    #${PLAYER_ID}
+      .equalizer span:nth-child(4) {
+      animation-delay: .45s;
+    }
+
+    #${PLAYER_ID}
+      .equalizer span:nth-child(5) {
+      animation-delay: .60s;
+    }
+
+
+    @keyframes parijat-eq {
+
+      0%,100% {
+        height: 10px;
+      }
+
+      50% {
+        height: 34px;
+      }
+    }
+
+
+    /* ---------------------------------------------------------
+       SEEK BAR
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .seekbar-container {
+
+      display: flex;
+
+      align-items: center;
+
+      gap: 10px;
+
+      width: 100%;
+    }
+
+
+    #${PLAYER_ID} #seekbar {
+
+      flex: 1;
+
+      accent-color:
+        #ff7357;
+
+      cursor: pointer;
+    }
+
+
+    /* ---------------------------------------------------------
+       VOLUME
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .volume-container {
+
+      display: flex;
+
+      align-items: center;
+
+      gap: 12px;
+
+      margin-top: 14px;
+
+      width: 100%;
+    }
+
+
+    #${PLAYER_ID} #muteBtn {
+
+      width: 38px;
+      height: 38px;
+
+      border: none;
+
+      border-radius: 50%;
+
+      cursor: pointer;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      background:
+        linear-gradient(
+          145deg,
+          #ff7357,
+          #ff512f
+        );
+
+      box-shadow:
+        0 0 12px
+        rgba(255,115,87,0.4);
+
+      transition: .25s;
+    }
+
+
+    #${PLAYER_ID} #muteBtn:hover {
+
+      transform: scale(1.08);
+
+      box-shadow:
+        0 0 18px
+        rgba(255,115,87,0.8);
+    }
+
+
+    #${PLAYER_ID} #volumeBar {
+
+      flex: 1;
+
+      accent-color:
+        #ff7357;
+
+      cursor: pointer;
+    }
+
+
+    /* ---------------------------------------------------------
+       PLAY MODE BUTTON
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .mode-btn {
+
+      width: 38px;
+      height: 38px;
+
+      min-width: 38px;
+
+      border: none;
+
+      border-radius: 50%;
+
+      cursor: pointer;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      background:
+        linear-gradient(
+          145deg,
+          #ff7357,
+          #ff512f
+        );
+
+      box-shadow:
+        0 0 12px
+        rgba(255,115,87,0.4);
+
+      transition: .25s;
+    }
+
+
+    #${PLAYER_ID} .mode-btn:hover {
+
+      transform: scale(1.08);
+
+      box-shadow:
+        0 0 18px
+        rgba(255,115,87,0.8);
+    }
+
+
+    /* ---------------------------------------------------------
+       MINIMIZE BUTTON
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID} .floating-minimize-btn {
+
+      position: absolute;
+
+      top: 7px;
+      right: 7px;
+
+      z-index: 10;
+
+      width: 28px;
+      height: 28px;
+
+      padding: 0;
+
+      border:
+        1px solid
+        rgba(255,255,255,.12);
+
+      border-radius: 50%;
+
+      background:
+        rgba(20,20,20,.72);
+
+      color: #ffffff;
+
+      font:
+        700 18px/26px
+        Arial,sans-serif;
+
+      cursor: pointer !important;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+    }
+
+
+    /* ---------------------------------------------------------
+       MINIMIZED BUBBLE
+       --------------------------------------------------------- */
+
+    #${PLAYER_ID}
+      .music-player-bubble {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}.parijat-player-minimized {
+
+      width: 58px;
+
+      max-width: 58px;
+
+      height: 58px;
+    }
+
+
+    #${PLAYER_ID}.parijat-player-minimized
+      #player {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}.parijat-player-minimized
+      .floating-minimize-btn {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}.parijat-player-minimized
+      .music-player-bubble {
+
+      position: relative;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      width: 58px;
+      height: 58px;
+
+      margin: 0;
+      padding: 0;
+
+      border:
+        1px solid
+        rgba(255,115,87,.4);
+
+      border-radius: 50%;
+
+      background:
+        linear-gradient(
+          145deg,
+          #1f1f1f,
+          #121212
+        );
+
+      color: #ffffff;
+
+      font-size: 28px;
+
+      line-height: 1;
+
+      cursor: pointer !important;
+
+      box-sizing: border-box;
+
+      box-shadow:
+        0 0 20px
+        rgba(255,115,87,.18),
+
+        inset 0 0 20px
+        rgba(255,255,255,.03);
+
+      touch-action: none;
+    }
+
+
+    /*
+     * Loading-style ring around the bubble.
+     */
+
+    #${PLAYER_ID}.parijat-player-minimized
+      .music-player-bubble::after {
+
+      content: "";
+
+      display: none;
+
+      position: absolute;
+
+      inset: -5px;
+
+      border-radius: 50%;
+
+      background:
+        conic-gradient(
+          from 0deg,
+
+          transparent 0deg,
+          transparent 45deg,
+
+          #ff7357 90deg,
+          #ff7357 135deg,
+
+          transparent 180deg,
+          transparent 360deg
+        );
+
+      -webkit-mask:
+        radial-gradient(
+          farthest-side,
+          transparent calc(100% - 2px),
+          #000 calc(100% - 2px)
+        );
+
+      mask:
+        radial-gradient(
+          farthest-side,
+          transparent calc(100% - 2px),
+          #000 calc(100% - 2px)
+        );
+
+      animation:
+        parijat-player-loading
+        1s linear infinite;
+
+      pointer-events: none;
+    }
+
+
+    #${PLAYER_ID}.parijat-player-minimized
+      .music-player-bubble.is-playing::after {
+
+      display: block;
+    }
+
+
+    @keyframes parijat-player-loading {
+
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+
+    /* ---------------------------------------------------------
+       SMALL SCREENS
+       --------------------------------------------------------- */
+
+    @media (max-width: 600px) {
+
+      #${PLAYER_ID} {
+
+        top: 76px;
+
+        right: 12px;
+
+        width:
+          min(
+            360px,
+            calc(100vw - 24px)
+          );
+      }
+    }
+  `;
+
+
+    /* =========================================================
+       CREATE PLAYER
+       ========================================================= */
+
+    function createPlayer() {
+
+        if (
+            document.getElementById(
+                PLAYER_ID
+            )
+        ) {
+            return false;
+        }
+
+
+        const style =
+            document.createElement("style");
+
+        style.id =
+            PLAYER_ID +
+            "-styles";
+
+        style.textContent =
+            PLAYER_CSS;
+
+        document.head.appendChild(
+            style
+        );
+
+
+        widget =
+            document.createElement("div");
+
+        widget.id =
+            PLAYER_ID;
+
+        widget.innerHTML =
+            PLAYER_HTML;
+
+        document.body.appendChild(
+            widget
+        );
+
+
+        player =
+            widget.querySelector(
+                "#player"
+            );
+
+        audio =
+            widget.querySelector(
+                "#audio"
+            );
+
+        playBtn =
+            widget.querySelector(
+                "#playBtn"
+            );
+
+        nextBtn =
+            widget.querySelector(
+                "#nextBtn"
+            );
+
+        prevBtn =
+            widget.querySelector(
+                "#prevBtn"
+            );
+
+        seekbar =
+            widget.querySelector(
+                "#seekbar"
+            );
+
+        trackTitle =
+            widget.querySelector(
+                "#trackTitle"
+            );
+
+        trackArtist =
+            widget.querySelector(
+                "#trackArtist"
+            );
+
+        volumeBar =
+            widget.querySelector(
+                "#volumeBar"
+            );
+
+        muteBtn =
+            widget.querySelector(
+                "#muteBtn"
+            );
+
+        modeBtn =
+            widget.querySelector(
+                "#modeBtn"
+            );
+
+
+        /* ---------------------------------------------------------
+           Minimize control
+           --------------------------------------------------------- */
+
+        minimizeBtn =
+            document.createElement(
+                "button"
+            );
+
+        minimizeBtn.type =
+            "button";
+
+        minimizeBtn.className =
+            "floating-minimize-btn";
+
+        minimizeBtn.textContent =
+            "−";
+
+        minimizeBtn.title =
+            "Minimize player";
+
+        minimizeBtn.setAttribute(
+            "aria-label",
+            "Minimize player"
+        );
+
+
+        /* ---------------------------------------------------------
+           Bubble
+           --------------------------------------------------------- */
+
+        bubble =
+            document.createElement(
+                "button"
+            );
+
+        bubble.type =
+            "button";
+
+        bubble.className =
+            "music-player-bubble";
+
+        bubble.textContent =
+            "🎵";
+
+        bubble.title =
+            "Open music player";
+
+        bubble.setAttribute(
+            "aria-label",
+            "Open music player"
+        );
+
+
+        widget.appendChild(
+            minimizeBtn
+        );
+
+        widget.appendChild(
+            bubble
+        );
+
+        return true;
     }
 
 
@@ -73,22 +1015,20 @@
        TAB TITLE
        ========================================================= */
 
-    function updateBrowserTitle() {
+    function updateTabTitle() {
 
         const name =
-            trackTitle &&
-                trackTitle.textContent
-                ? trackTitle.textContent.trim()
-                : "";
+            trackTitle?.textContent?.trim();
 
         if (
             !name ||
             name === "LOADING..." ||
-            name === "UNKNOWN TRACK" ||
             name === "PLAYLIST EMPTY" ||
             name === "FAILED TO LOAD PLAYLIST"
         ) {
-            document.title = originalDocumentTitle;
+            document.title =
+                originalTitle;
+
             return;
         }
 
@@ -99,10 +1039,10 @@
 
 
     /* =========================================================
-       SAVE COMPLETE PLAYER STATE
+       PLAYER STATE
        ========================================================= */
 
-    function savePlayerState() {
+    function saveState() {
 
         if (!audio) {
             return;
@@ -112,32 +1052,44 @@
 
             localStorage.setItem(
                 STORAGE.track,
-                String(currentTrack)
+                String(
+                    currentTrack
+                )
             );
 
             localStorage.setItem(
                 STORAGE.time,
-                String(audio.currentTime || 0)
+                String(
+                    audio.currentTime || 0
+                )
             );
 
             localStorage.setItem(
                 STORAGE.volume,
-                String(audio.volume)
+                String(
+                    audio.volume
+                )
             );
 
             localStorage.setItem(
                 STORAGE.muted,
-                String(audio.muted)
+                String(
+                    audio.muted
+                )
             );
 
             localStorage.setItem(
                 STORAGE.playing,
-                String(!audio.paused)
+                String(
+                    !audio.paused
+                )
             );
 
             localStorage.setItem(
                 STORAGE.mode,
-                String(playMode)
+                String(
+                    playMode
+                )
             );
 
             localStorage.setItem(
@@ -145,18 +1097,9 @@
                 displayMode
             );
 
-        } catch (error) {
-            console.warn(
-                "[Cyber Player] State save failed:",
-                error
-            );
-        }
+        } catch (_) { }
     }
 
-
-    /* =========================================================
-       SAVE FLOATING POSITION
-       ========================================================= */
 
     function savePosition() {
 
@@ -167,514 +1110,317 @@
             return;
         }
 
-        const left =
-            parseFloat(widget.style.left);
+        const rect =
+            widget.getBoundingClientRect();
 
-        const top =
-            parseFloat(widget.style.top);
+        localStorage.setItem(
+            STORAGE.left,
+            String(
+                Math.round(
+                    rect.left
+                )
+            )
+        );
 
-        if (
-            Number.isFinite(left) &&
-            Number.isFinite(top)
-        ) {
-
-            localStorage.setItem(
-                STORAGE.left,
-                String(left)
-            );
-
-            localStorage.setItem(
-                STORAGE.top,
-                String(top)
-            );
-        }
+        localStorage.setItem(
+            STORAGE.top,
+            String(
+                Math.round(
+                    rect.top
+                )
+            )
+        );
     }
 
 
     /* =========================================================
-       PLAYER UI
+       VIEWPORT
        ========================================================= */
 
-    function setPlayingUI(isPlaying) {
+    function isDesktop() {
 
-        if (!playBtn) {
+        return (
+            window.innerWidth >
+            BREAKPOINT
+        );
+    }
+
+
+    function clampPlayer() {
+
+        if (
+            !widget ||
+            !isDesktop()
+        ) {
             return;
         }
 
-        if (isPlaying) {
+        const rect =
+            widget.getBoundingClientRect();
 
-            playBtn.innerHTML = `
-        <svg
-          viewBox="0 0 24 24"
-          width="24"
-          height="24"
-          fill="white"
-        >
-          <path d="M6 5h4v14H6zm8 0h4v14h-4z"/>
-        </svg>
-      `;
+        const maxLeft =
+            Math.max(
+                MARGIN,
+                window.innerWidth -
+                rect.width -
+                MARGIN
+            );
+
+        const maxTop =
+            Math.max(
+                MARGIN,
+                window.innerHeight -
+                rect.height -
+                MARGIN
+            );
+
+        const left =
+            Math.max(
+                MARGIN,
+                Math.min(
+                    rect.left,
+                    maxLeft
+                )
+            );
+
+        const top =
+            Math.max(
+                MARGIN,
+                Math.min(
+                    rect.top,
+                    maxTop
+                )
+            );
+
+        widget.style.left =
+            left + "px";
+
+        widget.style.top =
+            top + "px";
+
+        widget.style.right =
+            "auto";
+    }
+
+
+    function restorePosition() {
+
+        if (!isDesktop()) {
+            return;
+        }
+
+        const savedLeft =
+            Number(
+                localStorage.getItem(
+                    STORAGE.left
+                )
+            );
+
+        const savedTop =
+            Number(
+                localStorage.getItem(
+                    STORAGE.top
+                )
+            );
+
+
+        if (
+            Number.isFinite(
+                savedLeft
+            ) &&
+            Number.isFinite(
+                savedTop
+            )
+        ) {
+
+            widget.style.left =
+                savedLeft + "px";
+
+            widget.style.top =
+                savedTop + "px";
+
+            widget.style.right =
+                "auto";
 
         } else {
 
-            playBtn.innerHTML = `
-        <svg
-          viewBox="0 0 24 24"
-          width="24"
-          height="24"
-          fill="white"
-        >
-          <path d="M8 5v14l11-7z"/>
-        </svg>
-      `;
+            widget.style.left =
+                "auto";
+
+            widget.style.top =
+                "85px";
+
+            widget.style.right =
+                "32px";
         }
+
+
+        clampPlayer();
+    }
+
+
+    /* =========================================================
+       DISPLAY MODE
+       ========================================================= */
+
+    function setDisplayMode(
+        mode
+    ) {
+
+        if (
+            mode === "minimized"
+        ) {
+
+            displayMode =
+                "minimized";
+
+            widget.classList.add(
+                "parijat-player-minimized"
+            );
+
+            clampPlayer();
+            savePosition();
+            saveState();
+
+            return;
+        }
+
+
+        expandSafely();
+    }
+
+
+    function expandSafely() {
+
+        if (!isDesktop()) {
+            return;
+        }
+
+
+        const oldRect =
+            widget.getBoundingClientRect();
+
+
+        /*
+         * Reveal the player invisibly.
+         */
+
+        widget.classList.remove(
+            "parijat-player-minimized"
+        );
+
+        widget.style.visibility =
+            "hidden";
+
+        widget.style.left =
+            oldRect.left + "px";
+
+        widget.style.top =
+            oldRect.top + "px";
+
+        widget.style.right =
+            "auto";
+
+
+        /*
+         * Wait for the browser to calculate
+         * the full player's dimensions.
+         */
+
+        requestAnimationFrame(
+            function () {
+
+                clampPlayer();
+
+                displayMode =
+                    "expanded";
+
+                widget.style.visibility =
+                    "visible";
+
+                savePosition();
+                saveState();
+            }
+        );
+    }
+
+
+    function restoreDisplayMode() {
+
+        displayMode =
+            localStorage.getItem(
+                STORAGE.displayMode
+            ) === "minimized"
+                ? "minimized"
+                : "expanded";
+
+        if (
+            !isDesktop()
+        ) {
+
+            displayMode =
+                "expanded";
+
+            widget.classList.remove(
+                "parijat-player-minimized"
+            );
+
+            return;
+        }
+
+
+        widget.classList.toggle(
+            "parijat-player-minimized",
+            displayMode ===
+            "minimized"
+        );
+    }
+
+
+    /* =========================================================
+       PLAYBACK UI
+       ========================================================= */
+
+    function updatePlayButton(
+        playing
+    ) {
+
+        playBtn.innerHTML =
+            playing
+                ? `
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="white"
+          >
+            <path d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+          </svg>
+        `
+                : `
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="white"
+          >
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        `;
 
         player.classList.toggle(
             "playing",
-            isPlaying
+            playing
         );
-
-        updateBubbleState();
-    }
-
-
-    function updateBubbleState() {
-
-        if (!bubble) {
-            return;
-        }
 
         bubble.classList.toggle(
             "is-playing",
-            !!audio &&
-            !audio.paused
+            playing
         );
     }
 
-
-    /* =========================================================
-       LOAD TRACK
-       ========================================================= */
-
-    function loadTrack(index) {
-
-        if (
-            !tracks.length ||
-            !audio
-        ) {
-            return;
-        }
-
-        currentTrack =
-            Math.max(
-                0,
-                Math.min(
-                    index,
-                    tracks.length - 1
-                )
-            );
-
-        const track =
-            tracks[currentTrack];
-
-        audio.src =
-            track.src;
-
-        trackTitle.textContent =
-            track.title || "UNTITLED";
-
-        trackArtist.textContent =
-            track.artist || "";
-
-        updateBrowserTitle();
-    }
-
-
-    /* =========================================================
-       LOAD PLAYLIST
-       ========================================================= */
-
-    async function loadPlaylist() {
-
-        try {
-
-            const response =
-                await fetch(
-                    PLAYLIST_URL,
-                    {
-                        cache: "no-cache"
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    "Playlist request failed: " +
-                    response.status
-                );
-            }
-
-            const playlist =
-                await response.json();
-
-            if (!Array.isArray(playlist)) {
-                throw new Error(
-                    "Playlist JSON is not an array"
-                );
-            }
-
-            tracks =
-                playlist
-                    .map(function (track) {
-                        return {
-                            title:
-                                String(
-                                    track?.title ||
-                                    "UNTITLED"
-                                ),
-
-                            artist:
-                                String(
-                                    track?.artist ||
-                                    ""
-                                ),
-
-                            src:
-                                String(
-                                    track?.src ||
-                                    ""
-                                )
-                        };
-                    })
-                    .filter(function (track) {
-                        return track.src;
-                    });
-
-            if (!tracks.length) {
-
-                trackTitle.textContent =
-                    "PLAYLIST EMPTY";
-
-                return;
-            }
-
-            const savedTrack =
-                number(
-                    localStorage.getItem(
-                        STORAGE.track
-                    ),
-                    0
-                );
-
-            currentTrack =
-                Math.max(
-                    0,
-                    Math.min(
-                        savedTrack,
-                        tracks.length - 1
-                    )
-                );
-
-            loadTrack(
-                currentTrack
-            );
-
-            await restoreCompleteState();
-
-        } catch (error) {
-
-            console.error(
-                "[Cyber Player]",
-                error
-            );
-
-            if (trackTitle) {
-                trackTitle.textContent =
-                    "FAILED TO LOAD PLAYLIST";
-            }
-        }
-    }
-
-
-    /* =========================================================
-       RESTORE COMPLETE STATE
-       ========================================================= */
-
-    async function restoreCompleteState() {
-
-        if (
-            !audio ||
-            !tracks.length
-        ) {
-            return;
-        }
-
-        const savedTime =
-            Math.max(
-                0,
-                number(
-                    localStorage.getItem(
-                        STORAGE.time
-                    ),
-                    0
-                )
-            );
-
-        const savedVolume =
-            Math.max(
-                0,
-                Math.min(
-                    1,
-                    number(
-                        localStorage.getItem(
-                            STORAGE.volume
-                        ),
-                        1
-                    )
-                )
-            );
-
-        const savedMuted =
-            localStorage.getItem(
-                STORAGE.muted
-            ) === "true";
-
-        const savedPlaying =
-            localStorage.getItem(
-                STORAGE.playing
-            ) === "true";
-
-        playMode =
-            Math.max(
-                0,
-                Math.min(
-                    2,
-                    number(
-                        localStorage.getItem(
-                            STORAGE.mode
-                        ),
-                        0
-                    )
-                )
-            );
-
-
-
-        audio.volume =
-            savedVolume;
-
-        audio.muted =
-            savedMuted;
-
-        volumeBar.value =
-            savedVolume;
-
-
-
-        const restorePosition =
-            function () {
-
-                if (
-                    Number.isFinite(
-                        audio.duration
-                    ) &&
-                    audio.duration > 0
-                ) {
-
-                    audio.currentTime =
-                        Math.min(
-                            savedTime,
-                            Math.max(
-                                0,
-                                audio.duration - 0.01
-                            )
-                        );
-
-                    seekbar.value =
-                        (
-                            audio.currentTime /
-                            audio.duration
-                        ) * 100;
-                }
-            };
-
-
-        if (
-            audio.readyState >= 1
-        ) {
-
-            restorePosition();
-
-        } else {
-
-            audio.addEventListener(
-                "loadedmetadata",
-                restorePosition,
-                { once: true }
-            );
-        }
-
-
-        updateMuteButton();
-        updateModeButton();
-        updateBrowserTitle();
-
-
-
-        if (savedPlaying) {
-
-            try {
-
-                await audio.play();
-
-                setPlayingUI(
-                    true
-                );
-
-            } catch (error) {
-
-                console.warn(
-                    "[Cyber Player] Browser prevented automatic resume:",
-                    error
-                );
-
-                setPlayingUI(false);
-            }
-
-        } else {
-
-            audio.pause();
-
-            setPlayingUI(
-                false
-            );
-        }
-
-
-        syncDesktopMode();
-    }
-
-
-    /* =========================================================
-       PLAY / PAUSE
-       ========================================================= */
-
-    async function playAudio() {
-
-        try {
-
-            await audio.play();
-
-            setPlayingUI(
-                true
-            );
-
-            savePlayerState();
-
-        } catch (error) {
-
-            console.warn(
-                "[Cyber Player] Playback failed:",
-                error
-            );
-
-            setPlayingUI(
-                false
-            );
-        }
-    }
-
-
-    function pauseAudio() {
-
-        audio.pause();
-
-        setPlayingUI(
-            false
-        );
-
-        savePlayerState();
-    }
-
-
-    /* =========================================================
-       NEXT / PREVIOUS
-       ========================================================= */
-
-    function nextTrack() {
-
-        if (!tracks.length) {
-            return;
-        }
-
-        if (
-            playMode === 1 &&
-            tracks.length > 1
-        ) {
-
-            let next =
-                currentTrack;
-
-            while (
-                next === currentTrack
-            ) {
-
-                next =
-                    Math.floor(
-                        Math.random() *
-                        tracks.length
-                    );
-            }
-
-            currentTrack =
-                next;
-
-        } else {
-
-            currentTrack =
-                (
-                    currentTrack + 1
-                ) %
-                tracks.length;
-        }
-
-        loadTrack(
-            currentTrack
-        );
-
-        playAudio();
-    }
-
-
-    function previousTrack() {
-
-        if (!tracks.length) {
-            return;
-        }
-
-        currentTrack =
-            currentTrack <= 0
-                ? tracks.length - 1
-                : currentTrack - 1;
-
-        loadTrack(
-            currentTrack
-        );
-
-        playAudio();
-    }
-
-
-    /* =========================================================
-       VOLUME / MUTE
-       ========================================================= */
 
     function updateMuteButton() {
-
-        if (
-            !audio ||
-            !muteBtn
-        ) {
-            return;
-        }
 
         const muted =
             audio.muted ||
@@ -704,76 +1450,6 @@
         `;
     }
 
-
-    function toggleMute() {
-
-        if (
-            audio.muted ||
-            audio.volume === 0
-        ) {
-
-            audio.muted =
-                false;
-
-            if (
-                audio.volume === 0
-            ) {
-
-                const previous =
-                    number(
-                        audio.dataset.previousVolume,
-                        1
-                    );
-
-                audio.volume =
-                    previous > 0
-                        ? previous
-                        : 1;
-
-                volumeBar.value =
-                    audio.volume;
-            }
-
-        } else {
-
-            audio.dataset.previousVolume =
-                String(
-                    audio.volume
-                );
-
-            audio.muted =
-                true;
-        }
-
-        updateMuteButton();
-        savePlayerState();
-    }
-
-
-    function updateVolume() {
-
-        audio.volume =
-            Math.max(
-                0,
-                Math.min(
-                    1,
-                    Number(
-                        volumeBar.value
-                    )
-                )
-            );
-
-        audio.muted =
-            audio.volume === 0;
-
-        updateMuteButton();
-        savePlayerState();
-    }
-
-
-    /* =========================================================
-       PLAY MODE
-       ========================================================= */
 
     function updateModeButton() {
 
@@ -833,822 +1509,567 @@
     }
 
 
-    function cyclePlayMode() {
-
-        playMode =
-            (playMode + 1) % 3;
-
-        updateModeButton();
-        savePlayerState();
-    }
-
-
     /* =========================================================
-       FLOATING PLAYER CSS
+       TRACK LOADING
        ========================================================= */
 
-    function injectStyles() {
-
-        if (
-            document.getElementById(
-                "cyber-player-floating-styles"
-            )
-        ) {
-            return;
-        }
-
-        const style =
-            document.createElement(
-                "style"
-            );
-
-        style.id =
-            "cyber-player-floating-styles";
-
-        style.textContent = `
-
-      @media screen and (min-width: 1620px) {
-
-        #HTML1 {
-          position: fixed !important;
-
-          top: 85px;
-          right: 32px;
-          left: auto;
-
-          width: 280px !important;
-          max-width: 280px !important;
-
-          margin: 0 !important;
-          padding: 0 !important;
-
-          z-index: 99999 !important;
-
-          overflow: visible !important;
-
-          cursor: grab !important;
-
-          user-select: none !important;
-          -webkit-user-select: none !important;
-
-          touch-action: none !important;
-
-          pointer-events: auto !important;
-        }
-
-
-        #HTML1.dragging {
-          cursor: grabbing !important;
-        }
-
-
-        #HTML1 .widget-content {
-          width: 100% !important;
-
-          margin: 0 !important;
-          padding: 0 !important;
-
-          overflow: visible !important;
-        }
-
-
-        #HTML1 #player {
-          width: 100% !important;
-          max-width: none !important;
-        }
-
-
-        #HTML1 .floating-minimize-btn {
-
-          position: absolute;
-
-          top: 7px;
-          right: 7px;
-
-          z-index: 10003;
-
-          width: 28px;
-          height: 28px;
-
-          padding: 0;
-
-          border:
-            1px solid
-            rgba(255,255,255,.12);
-
-          border-radius: 50%;
-
-          background:
-            rgba(20,20,20,.72);
-
-          color: #fff;
-
-          font:
-            700 18px/26px
-            Arial,
-            sans-serif;
-
-          cursor: pointer !important;
-
-          display: flex;
-
-          align-items: center;
-          justify-content: center;
-        }
-
-
-        #HTML1 .music-player-bubble {
-          display: none;
-        }
-
-
-        #HTML1.music-player-floating-minimized {
-
-          width: 58px !important;
-          max-width: 58px !important;
-
-          height: 58px !important;
-        }
-
-
-        #HTML1.music-player-floating-minimized #player {
-          display: none !important;
-        }
-
-
-        #HTML1.music-player-floating-minimized
-          .floating-minimize-btn {
-
-          display: none !important;
-        }
-
-
-        #HTML1.music-player-floating-minimized
-          .music-player-bubble {
-
-          position: relative;
-
-          display: flex;
-
-          align-items: center;
-          justify-content: center;
-
-          width: 58px;
-          height: 58px;
-
-          margin: 0;
-          padding: 0;
-
-          border:
-            1px solid
-            rgba(255,115,87,.4);
-
-          border-radius: 50%;
-
-          background:
-            linear-gradient(
-              145deg,
-              #1f1f1f,
-              #121212
-            );
-
-          color: #fff;
-
-          font-size: 28px;
-          line-height: 1;
-
-          cursor: pointer !important;
-
-          box-sizing: border-box;
-
-          box-shadow:
-            0 0 20px
-            rgba(255,115,87,.18),
-
-            inset 0 0 20px
-            rgba(255,255,255,.03);
-
-          touch-action: none;
-        }
-
-
-        #HTML1.music-player-floating-minimized
-          .music-player-bubble::after {
-
-          content: "";
-
-          display: none;
-
-          position: absolute;
-
-          inset: -5px;
-
-          border-radius: 50%;
-
-          background:
-            conic-gradient(
-              from 0deg,
-
-              transparent 0deg,
-              transparent 45deg,
-
-              #ff7357 90deg,
-              #ff7357 135deg,
-
-              transparent 180deg,
-              transparent 360deg
-            );
-
-          -webkit-mask:
-            radial-gradient(
-              farthest-side,
-
-              transparent
-              calc(100% - 2px),
-
-              #000
-              calc(100% - 2px)
-            );
-
-          mask:
-            radial-gradient(
-              farthest-side,
-
-              transparent
-              calc(100% - 2px),
-
-              #000
-              calc(100% - 2px)
-            );
-
-          animation:
-            cyberPlayerLoadingSpin
-            1s linear infinite;
-
-          pointer-events: none;
-        }
-
-
-        #HTML1.music-player-floating-minimized
-          .music-player-bubble.is-playing::after {
-
-          display: block;
-        }
-
-
-        @keyframes cyberPlayerLoadingSpin {
-
-          from {
-            transform: rotate(0deg);
-          }
-
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      }
-
-
-      @media screen and (max-width: 1619px) {
-
-        #HTML1 .floating-minimize-btn,
-        #HTML1 .music-player-bubble {
-
-          display: none !important;
-        }
-      }
-    `;
-
-        document.head.appendChild(
-            style
-        );
-    }
-
-
-    /* =========================================================
-       CREATE FLOATING CONTROLS
-       ========================================================= */
-
-    function setupFloatingElements() {
-
-        injectStyles();
-
-
-        minimizeBtn =
-            document.createElement(
-                "button"
-            );
-
-        minimizeBtn.type =
-            "button";
-
-        minimizeBtn.className =
-            "floating-minimize-btn";
-
-        minimizeBtn.setAttribute(
-            "aria-label",
-            "Minimize music player"
-        );
-
-        minimizeBtn.title =
-            "Minimize";
-
-        minimizeBtn.textContent =
-            "−";
-
-
-        bubble =
-            document.createElement(
-                "button"
-            );
-
-        bubble.type =
-            "button";
-
-        bubble.className =
-            "music-player-bubble";
-
-        bubble.setAttribute(
-            "aria-label",
-            "Open music player"
-        );
-
-        bubble.title =
-            "Open music player";
-
-        bubble.textContent =
-            "🎵";
-
-
-        widget.appendChild(
-            minimizeBtn
-        );
-
-        widget.appendChild(
-            bubble
-        );
-
-
-        minimizeBtn.addEventListener(
-            "click",
-            function (event) {
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                setDisplayMode(
-                    "minimized"
-                );
-            }
-        );
-
-
-        bubble.addEventListener(
-            "click",
-            function (event) {
-
-                if (dragMoved) {
-
-                    dragMoved = false;
-
-                    event.preventDefault();
-                    event.stopPropagation();
-
-                    return;
-                }
-
-                event.preventDefault();
-                event.stopPropagation();
-
-                setDisplayMode(
-                    "expanded"
-                );
-            }
-        );
-    }
-
-
-    /* =========================================================
-       POSITION HELPERS
-       ========================================================= */
-
-    function getSavedPosition() {
-
-        const left =
-            localStorage.getItem(
-                STORAGE.left
-            );
-
-        const top =
-            localStorage.getItem(
-                STORAGE.top
-            );
-
-        return {
-
-            left:
-                left !== null
-                    ? number(left, NaN)
-                    : NaN,
-
-            top:
-                top !== null
-                    ? number(top, NaN)
-                    : NaN
-        };
-    }
-
-
-    function clampPosition(
-        left,
-        top
+    function loadTrack(
+        index
     ) {
 
-        const maxLeft =
+        if (
+            !tracks.length
+        ) {
+            return;
+        }
+
+
+        currentTrack =
             Math.max(
                 0,
-                window.innerWidth -
-                widget.offsetWidth
+                Math.min(
+                    index,
+                    tracks.length - 1
+                )
             );
 
-        const maxTop =
-            Math.max(
-                0,
-                window.innerHeight -
-                widget.offsetHeight
-            );
 
-        return {
+        const track =
+            tracks[currentTrack];
 
-            left:
-                Math.max(
-                    0,
-                    Math.min(
-                        left,
-                        maxLeft
+
+        audio.src =
+            track.src;
+
+
+        trackTitle.textContent =
+            track.title ||
+            "UNTITLED";
+
+
+        trackArtist.textContent =
+            track.artist ||
+            "";
+
+
+        updateTabTitle();
+    }
+
+
+    /* =========================================================
+       PLAYLIST
+       ========================================================= */
+
+    async function loadPlaylist() {
+
+        try {
+
+            const response =
+                await fetch(
+                    PLAYLIST_URL,
+                    {
+                        cache: "no-cache"
+                    }
+                );
+
+
+            if (!response.ok) {
+
+                throw new Error(
+                    "Playlist request failed: " +
+                    response.status
+                );
+            }
+
+
+            const data =
+                await response.json();
+
+
+            if (!Array.isArray(data)) {
+
+                throw new Error(
+                    "Playlist JSON is not an array"
+                );
+            }
+
+
+            tracks =
+                data
+                    .map(
+                        function (track) {
+
+                            return {
+
+                                title:
+                                    String(
+                                        track?.title ||
+                                        "UNTITLED"
+                                    ),
+
+                                artist:
+                                    String(
+                                        track?.artist ||
+                                        ""
+                                    ),
+
+                                src:
+                                    String(
+                                        track?.src ||
+                                        ""
+                                    )
+                            };
+                        }
                     )
-                ),
+                    .filter(
+                        function (track) {
+                            return !!track.src;
+                        }
+                    );
 
-            top:
+
+            if (!tracks.length) {
+
+                trackTitle.textContent =
+                    "PLAYLIST EMPTY";
+
+                return;
+            }
+
+
+            currentTrack =
                 Math.max(
                     0,
                     Math.min(
-                        top,
-                        maxTop
+                        n(
+                            localStorage.getItem(
+                                STORAGE.track
+                            ),
+                            0
+                        ),
+                        tracks.length - 1
+                    )
+                );
+
+
+            playMode =
+                Math.max(
+                    0,
+                    Math.min(
+                        2,
+                        n(
+                            localStorage.getItem(
+                                STORAGE.mode
+                            ),
+                            0
+                        )
+                    )
+                );
+
+
+            loadTrack(
+                currentTrack
+            );
+
+
+            restoreState();
+
+        } catch (error) {
+
+            console.error(
+                "[Cyber Player]",
+                error
+            );
+
+            trackTitle.textContent =
+                "FAILED TO LOAD PLAYLIST";
+        }
+    }
+
+
+    /* =========================================================
+       RESTORE AUDIO STATE
+       ========================================================= */
+
+    function restoreState() {
+
+        const savedTime =
+            Math.max(
+                0,
+                n(
+                    localStorage.getItem(
+                        STORAGE.time
+                    ),
+                    0
+                )
+            );
+
+
+        const savedVolume =
+            Math.max(
+                0,
+                Math.min(
+                    1,
+                    n(
+                        localStorage.getItem(
+                            STORAGE.volume
+                        ),
+                        1
                     )
                 )
-        };
-    }
+            );
 
 
-    function restorePosition() {
-
-        if (!isDesktop()) {
-            return;
-        }
-
-        const saved =
-            getSavedPosition();
-
-        if (
-            Number.isFinite(
-                saved.left
-            ) &&
-            Number.isFinite(
-                saved.top
-            )
-        ) {
-
-            const position =
-                clampPosition(
-                    saved.left,
-                    saved.top
-                );
-
-            widget.style.left =
-                position.left +
-                "px";
-
-            widget.style.top =
-                position.top +
-                "px";
-
-            widget.style.right =
-                "auto";
-
-        } else {
-
-            widget.style.left =
-                "auto";
-
-            widget.style.top =
-                "85px";
-
-            widget.style.right =
-                "32px";
-        }
-    }
+        const savedMuted =
+            localStorage.getItem(
+                STORAGE.muted
+            ) === "true";
 
 
-    /* =========================================================
-       EXPAND WITH BOUNDARY CHECK
-       ========================================================= */
-
-    function expandIntoAvailableSpace() {
-
-        if (
-            !widget ||
-            !isDesktop()
-        ) {
-            return;
-        }
+        const savedPlaying =
+            localStorage.getItem(
+                STORAGE.playing
+            ) === "true";
 
 
-        const rect =
-            widget.getBoundingClientRect();
+        audio.volume =
+            savedVolume;
 
-        let left =
-            rect.left;
+        audio.muted =
+            savedMuted;
 
-        let top =
-            rect.top;
-
-
-
-        widget.classList.remove(
-            "music-player-floating-minimized"
-        );
-
-        widget.style.visibility =
-            "hidden";
-
-        widget.style.left =
-            left + "px";
-
-        widget.style.top =
-            top + "px";
-
-        widget.style.right =
-            "auto";
+        volumeBar.value =
+            savedVolume;
 
 
-        requestAnimationFrame(
+        updateMuteButton();
+        updateModeButton();
+
+
+        const restoreTime =
             function () {
 
-                const width =
-                    widget.offsetWidth;
+                if (
+                    Number.isFinite(
+                        audio.duration
+                    ) &&
+                    audio.duration > 0
+                ) {
 
-                const height =
-                    widget.offsetHeight;
-
-
-                const margin =
-                    16;
-
-
-                const maxLeft =
-                    Math.max(
-                        margin,
-                        window.innerWidth -
-                        width -
-                        margin
-                    );
-
-                const maxTop =
-                    Math.max(
-                        margin,
-                        window.innerHeight -
-                        height -
-                        margin
-                    );
-
-
-                left =
-                    Math.max(
-                        margin,
+                    audio.currentTime =
                         Math.min(
-                            left,
-                            maxLeft
-                        )
-                    );
-
-                top =
-                    Math.max(
-                        margin,
-                        Math.min(
-                            top,
-                            maxTop
-                        )
-                    );
+                            savedTime,
+                            Math.max(
+                                0,
+                                audio.duration - 0.01
+                            )
+                        );
 
 
-                widget.style.left =
-                    left + "px";
-
-                widget.style.top =
-                    top + "px";
-
-
-                widget.style.visibility =
-                    "visible";
+                    seekbar.value =
+                        (
+                            audio.currentTime /
+                            audio.duration
+                        ) * 100;
+                }
+            };
 
 
-                displayMode =
-                    "expanded";
+        if (
+            audio.readyState >= 1
+        ) {
+
+            restoreTime();
+
+        } else {
+
+            audio.addEventListener(
+                "loadedmetadata",
+                restoreTime,
+                {
+                    once: true
+                }
+            );
+        }
 
 
-                savePosition();
-                savePlayerState();
-            }
-        );
+        if (
+            savedPlaying
+        ) {
+
+            pendingResume =
+                true;
+
+            tryResume();
+
+        } else {
+
+            pendingResume =
+                false;
+
+            audio.pause();
+
+            updatePlayButton(
+                false
+            );
+        }
+
+
+        restoreDisplayMode();
     }
 
 
     /* =========================================================
-       DISPLAY MODE
+       AUTOPLAY RESUME
        ========================================================= */
 
-    function setDisplayMode(mode) {
+    async function tryResume() {
 
         if (
-            mode === "minimized"
+            !pendingResume
         ) {
-
-            displayMode =
-                "minimized";
-
-            if (isDesktop()) {
-
-                widget.classList.add(
-                    "music-player-floating-minimized"
-                );
-
-                updateBubbleState();
-
-                savePosition();
-                savePlayerState();
-            }
-
             return;
         }
 
-        expandIntoAvailableSpace();
+
+        try {
+
+            await audio.play();
+
+            pendingResume =
+                false;
+
+            updatePlayButton(
+                true
+            );
+
+        } catch (_) {
+
+            /*
+             * Browser autoplay policy.
+             * The saved state stays intact.
+             */
+        }
     }
 
-    function movePlayerForCurrentViewport() {
 
-        if (!widget) {
+    /* =========================================================
+       PLAY / PAUSE
+       ========================================================= */
+
+    async function playAudio() {
+
+        try {
+
+            await audio.play();
+
+            pendingResume =
+                false;
+
+            updatePlayButton(
+                true
+            );
+
+            saveState();
+
+        } catch (error) {
+
+            pendingResume =
+                true;
+
+            updatePlayButton(
+                false
+            );
+
+            console.warn(
+                "[Cyber Player] Playback blocked:",
+                error
+            );
+        }
+    }
+
+
+    function pauseAudio() {
+
+        audio.pause();
+
+        pendingResume =
+            false;
+
+        updatePlayButton(
+            false
+        );
+
+        saveState();
+    }
+
+
+    /* =========================================================
+       NEXT / PREVIOUS
+       ========================================================= */
+
+    function nextTrack() {
+
+        if (!tracks.length) {
             return;
         }
 
-        if (isDesktop()) {
 
-            if (!desktopMoved) {
+        if (
+            playMode === 1 &&
+            tracks.length > 1
+        ) {
 
-                originalParent =
-                    widget.parentNode;
+            let next =
+                currentTrack;
 
-                originalNextSibling =
-                    widget.nextSibling;
 
-                document.body.appendChild(
-                    widget
-                );
-
-                desktopMoved = true;
-            }
-
-            widget.style.position =
-                "fixed";
-
-            widget.style.width =
-                "360px";
-
-            widget.style.maxWidth =
-                "360px";
-
-            widget.style.margin =
-                "0";
-
-            widget.style.padding =
-                "0";
-
-            widget.style.zIndex =
-                "999999";
-        }
-
-        else {
-
-            if (
-                desktopMoved &&
-                originalParent
+            while (
+                next === currentTrack
             ) {
 
-                if (
-                    originalNextSibling &&
-                    originalNextSibling.parentNode ===
-                    originalParent
-                ) {
-
-                    originalParent.insertBefore(
-                        widget,
-                        originalNextSibling
+                next =
+                    Math.floor(
+                        Math.random() *
+                        tracks.length
                     );
-
-                } else {
-
-                    originalParent.appendChild(
-                        widget
-                    );
-                }
-
-                desktopMoved =
-                    false;
-
-                widget.style.position =
-                    "";
-
-                widget.style.left =
-                    "";
-
-                widget.style.top =
-                    "";
-
-                widget.style.right =
-                    "";
-
-                widget.style.width =
-                    "";
-
-                widget.style.maxWidth =
-                    "";
-
-                widget.style.margin =
-                    "";
-
-                widget.style.padding =
-                    "";
-
-                widget.style.zIndex =
-                    "";
             }
-        }
-    }
 
 
-    function syncDesktopMode() {
-
-        movePlayerForCurrentViewport();
-
-
-        if (!isDesktop()) {
-
-            widget.classList.remove(
-                "music-player-floating-minimized",
-                "dragging"
-            );
-
-            displayMode =
-                "expanded";
-
-            updateBubbleState();
-
-            return;
-        }
-
-
-        restorePosition();
-
-
-        const savedMode =
-            localStorage.getItem(
-                STORAGE.displayMode
-            );
-
-
-        if (
-            savedMode === "minimized"
-        ) {
-
-            displayMode =
-                "minimized";
-
-            widget.classList.add(
-                "music-player-floating-minimized"
-            );
+            currentTrack =
+                next;
 
         } else {
 
-            displayMode =
-                "expanded";
-
-            widget.classList.remove(
-                "music-player-floating-minimized"
-            );
+            currentTrack =
+                (
+                    currentTrack + 1
+                ) %
+                tracks.length;
         }
 
 
-        updateBubbleState();
+        loadTrack(
+            currentTrack
+        );
+
+
+        playAudio();
+    }
+
+
+    function previousTrack() {
+
+        if (!tracks.length) {
+            return;
+        }
+
+
+        currentTrack =
+            currentTrack <= 0
+                ? tracks.length - 1
+                : currentTrack - 1;
+
+
+        loadTrack(
+            currentTrack
+        );
+
+
+        playAudio();
+    }
+
+
+    /* =========================================================
+       VOLUME
+       ========================================================= */
+
+    function updateVolume() {
+
+        audio.volume =
+            Math.max(
+                0,
+                Math.min(
+                    1,
+                    Number(
+                        volumeBar.value
+                    )
+                )
+            );
+
+
+        audio.muted =
+            audio.volume === 0;
+
+
+        updateMuteButton();
+
+        saveState();
+    }
+
+
+    function toggleMute() {
+
+        if (
+            audio.muted ||
+            audio.volume === 0
+        ) {
+
+            audio.muted =
+                false;
+
+
+            if (
+                audio.volume === 0
+            ) {
+
+                audio.volume =
+                    Math.max(
+                        0.01,
+                        n(
+                            audio.dataset.previousVolume,
+                            1
+                        )
+                    );
+
+
+                volumeBar.value =
+                    audio.volume;
+            }
+
+        } else {
+
+            audio.dataset.previousVolume =
+                String(
+                    audio.volume
+                );
+
+            audio.muted =
+                true;
+        }
+
+
+        updateMuteButton();
+
+        saveState();
+    }
+
+
+    /* =========================================================
+       PLAY MODE
+       ========================================================= */
+
+    function cycleMode() {
+
+        playMode =
+            (
+                playMode + 1
+            ) % 3;
+
+
+        updateModeButton();
+
+        saveState();
     }
 
 
@@ -1656,11 +2077,16 @@
        DRAGGING
        ========================================================= */
 
-    function beginDrag(event) {
+    function beginDrag(
+        event
+    ) {
 
-        if (!isDesktop()) {
+        if (
+            !isDesktop()
+        ) {
             return;
         }
+
 
         if (
             event.button !== undefined &&
@@ -1673,28 +2099,32 @@
         const target =
             event.target;
 
+
+        /*
+         * Don't drag when a player control
+         * is being clicked.
+         *
+         * The minimized bubble is the exception.
+         */
+
         const isBubble =
-            target.closest(
+            !!target.closest(
                 ".music-player-bubble"
             );
 
 
-        /*
-         * Controls themselves should not drag.
-         */
-
         if (
             !isBubble &&
-            (
-                target.closest("button") ||
-                target.closest("input") ||
-                target.closest("a") ||
-                target.closest("select") ||
-                target.closest("textarea")
+            target.closest(
+                "button,input,a,select,textarea"
             )
         ) {
             return;
         }
+
+
+        const rect =
+            widget.getBoundingClientRect();
 
 
         dragging =
@@ -1707,15 +2137,12 @@
             event.pointerId;
 
 
-        const rect =
-            widget.getBoundingClientRect();
-
-
         dragStartX =
             event.clientX;
 
         dragStartY =
             event.clientY;
+
 
         dragStartLeft =
             rect.left;
@@ -1735,11 +2162,13 @@
             true
         );
 
+
         document.addEventListener(
             "pointerup",
             endDrag,
             true
         );
+
 
         document.addEventListener(
             "pointercancel",
@@ -1752,7 +2181,9 @@
     }
 
 
-    function handleDrag(event) {
+    function handleDrag(
+        event
+    ) {
 
         if (
             !dragging ||
@@ -1766,6 +2197,7 @@
         const dx =
             event.clientX -
             dragStartX;
+
 
         const dy =
             event.clientY -
@@ -1782,36 +2214,58 @@
         }
 
 
-        let left =
-            dragStartLeft +
-            dx;
+        const maxLeft =
+            Math.max(
+                MARGIN,
+                window.innerWidth -
+                widget.offsetWidth -
+                MARGIN
+            );
 
-        let top =
-            dragStartTop +
-            dy;
+
+        const maxTop =
+            Math.max(
+                MARGIN,
+                window.innerHeight -
+                widget.offsetHeight -
+                MARGIN
+            );
 
 
-        const position =
-            clampPosition(
-                left,
-                top
+        const left =
+            Math.max(
+                MARGIN,
+                Math.min(
+                    dragStartLeft + dx,
+                    maxLeft
+                )
+            );
+
+
+        const top =
+            Math.max(
+                MARGIN,
+                Math.min(
+                    dragStartTop + dy,
+                    maxTop
+                )
             );
 
 
         widget.style.left =
-            position.left +
-            "px";
+            left + "px";
 
         widget.style.top =
-            position.top +
-            "px";
+            top + "px";
 
         widget.style.right =
             "auto";
     }
 
 
-    function endDrag(event) {
+    function endDrag(
+        event
+    ) {
 
         if (!dragging) {
             return;
@@ -1821,8 +2275,6 @@
         if (
             event.pointerId !==
             undefined &&
-            dragPointerId !==
-            null &&
             event.pointerId !==
             dragPointerId
         ) {
@@ -1832,6 +2284,7 @@
 
         dragging =
             false;
+
 
         dragPointerId =
             null;
@@ -1848,11 +2301,13 @@
             true
         );
 
+
         document.removeEventListener(
             "pointerup",
             endDrag,
             true
         );
+
 
         document.removeEventListener(
             "pointercancel",
@@ -1862,7 +2317,31 @@
 
 
         savePosition();
-        savePlayerState();
+        saveState();
+
+
+        /*
+         * Prevent a drag of the bubble from
+         * being interpreted as a click.
+         */
+
+        if (
+            dragMoved
+        ) {
+
+            bubble.dataset.dragged =
+                "true";
+
+
+            setTimeout(
+                function () {
+
+                    delete bubble.dataset.dragged;
+
+                },
+                50
+            );
+        }
     }
 
 
@@ -1870,7 +2349,7 @@
        EVENTS
        ========================================================= */
 
-    function bindPlayerEvents() {
+    function bindEvents() {
 
         playBtn.addEventListener(
             "click",
@@ -1922,7 +2401,8 @@
                         audio.duration;
                 }
 
-                savePlayerState();
+
+                saveState();
             }
         );
 
@@ -1941,7 +2421,59 @@
 
         modeBtn.addEventListener(
             "click",
-            cyclePlayMode
+            cycleMode
+        );
+
+
+        minimizeBtn.addEventListener(
+            "click",
+            function (event) {
+
+                event.preventDefault();
+                event.stopPropagation();
+
+                setDisplayMode(
+                    "minimized"
+                );
+            }
+        );
+
+
+        bubble.addEventListener(
+            "click",
+            function (event) {
+
+                event.preventDefault();
+                event.stopPropagation();
+
+
+                if (
+                    bubble.dataset.dragged
+                ) {
+
+                    delete bubble.dataset.dragged;
+
+                    return;
+                }
+
+
+                expandSafely();
+            }
+        );
+
+
+        audio.addEventListener(
+            "loadedmetadata",
+            function () {
+
+                if (
+                    !Number.isFinite(
+                        audio.duration
+                    )
+                ) {
+                    return;
+                }
+            }
         );
 
 
@@ -1963,7 +2495,8 @@
                         ) * 100;
                 }
 
-                savePlayerState();
+
+                saveState();
             }
         );
 
@@ -1972,13 +2505,16 @@
             "play",
             function () {
 
-                setPlayingUI(
+                pendingResume =
+                    false;
+
+                updatePlayButton(
                     true
                 );
 
-                updateBrowserTitle();
+                updateTabTitle();
 
-                savePlayerState();
+                saveState();
             }
         );
 
@@ -1987,11 +2523,11 @@
             "pause",
             function () {
 
-                setPlayingUI(
+                updatePlayButton(
                     false
                 );
 
-                savePlayerState();
+                saveState();
             }
         );
 
@@ -2005,7 +2541,7 @@
 
                 updateMuteButton();
 
-                savePlayerState();
+                saveState();
             }
         );
 
@@ -2014,45 +2550,108 @@
             "ended",
             function () {
 
+                nextTrack();
+            }
+        );
+
+
+        document.addEventListener(
+            "pointerdown",
+            function () {
+
                 if (
-                    playMode === 0
+                    pendingResume
                 ) {
 
-                    currentTrack =
-                        (
-                            currentTrack + 1
-                        ) %
-                        tracks.length;
-
-
-                } else if (
-                    playMode === 1 &&
-                    tracks.length > 1
-                ) {
-
-                    let next =
-                        currentTrack;
-
-                    while (
-                        next === currentTrack
-                    ) {
-
-                        next =
-                            Math.floor(
-                                Math.random() *
-                                tracks.length
-                            );
-                    }
-
-                    currentTrack =
-                        next;
+                    tryResume();
                 }
+            },
+            {
+                passive: true
+            }
+        );
 
-                loadTrack(
-                    currentTrack
-                );
 
-                playAudio();
+        document.addEventListener(
+            "keydown",
+            function () {
+
+                if (
+                    pendingResume
+                ) {
+
+                    tryResume();
+                }
+            },
+            {
+                passive: true
+            }
+        );
+
+
+        window.addEventListener(
+            "resize",
+            function () {
+
+                if (
+                    isDesktop()
+                ) {
+
+                    clampPlayer();
+
+                } else {
+
+                    widget.style.left =
+                        "auto";
+
+                    widget.style.right =
+                        "12px";
+
+                    widget.style.top =
+                        "76px";
+                }
+            }
+        );
+
+
+        document.addEventListener(
+            "visibilitychange",
+            function () {
+
+                saveState();
+
+                if (
+                    document.visibilityState ===
+                    "hidden"
+                ) {
+
+                    savePosition();
+                }
+            }
+        );
+
+
+        window.addEventListener(
+            "pagehide",
+            function () {
+
+                saveState();
+                savePosition();
+
+            },
+            {
+                capture: true
+            }
+        );
+
+
+        window.addEventListener(
+            "beforeunload",
+            function () {
+
+                saveState();
+                savePosition();
+
             }
         );
     }
@@ -2064,123 +2663,98 @@
 
     function init() {
 
-        const widget = document.createElement("div");
-        widget.id = "parijat-floating-player";
+        if (
+            document.getElementById(
+                PLAYER_ID
+            )
+        ) {
+            return;
+        }
 
-        document.body.appendChild(widget);
+
+        createPlayer();
+
 
         if (
             !widget ||
-            !player
+            !player ||
+            !audio
         ) {
-            return;
-        }
 
-
-        audio =
-            document.getElementById(
-                "audio"
-            );
-
-        playBtn =
-            document.getElementById(
-                "playBtn"
-            );
-
-        nextBtn =
-            document.getElementById(
-                "nextBtn"
-            );
-
-        prevBtn =
-            document.getElementById(
-                "prevBtn"
-            );
-
-        seekbar =
-            document.getElementById(
-                "seekbar"
-            );
-
-        trackTitle =
-            document.getElementById(
-                "trackTitle"
-            );
-
-        trackArtist =
-            document.getElementById(
-                "trackArtist"
-            );
-
-        volumeBar =
-            document.getElementById(
-                "volumeBar"
-            );
-
-        muteBtn =
-            document.getElementById(
-                "muteBtn"
-            );
-
-        modeBtn =
-            document.getElementById(
-                "modeBtn"
-            );
-
-
-        if (
-            !audio ||
-            !playBtn ||
-            !nextBtn ||
-            !prevBtn ||
-            !seekbar ||
-            !trackTitle ||
-            !trackArtist ||
-            !volumeBar ||
-            !muteBtn ||
-            !modeBtn
-        ) {
             console.error(
-                "[Cyber Player] Required elements are missing."
+                "[Cyber Player] Failed to create player."
             );
 
             return;
         }
 
 
-        setupFloatingElements();
+        bindEvents();
 
-        bindPlayerEvents();
-
-        widget.addEventListener(
-            "pointerdown",
-            beginDrag,
-            false
-        );
-
-        movePlayerForCurrentViewport();
-
-        syncDesktopMode();
-
-        window.addEventListener(
-            "resize",
-            syncDesktopMode
-        );
-
-        window.addEventListener(
-            "beforeunload",
-            function () {
-                savePlayerState();
-                savePosition();
-            }
-        );
+        syncDisplayMode();
 
         loadPlaylist();
 
+
+        /*
+         * Frequent state saving while the page is open.
+         */
+
         window.setInterval(
-            savePlayerState,
-            1000
+            saveState,
+            250
         );
+    }
+
+
+    /*
+     * Small helper used by playlist/state code.
+     */
+
+    function n(
+        value,
+        fallback
+    ) {
+
+        const result =
+            Number(value);
+
+        return Number.isFinite(
+            result
+        )
+            ? result
+            : fallback;
+    }
+
+
+    function syncDisplayMode() {
+
+        if (
+            !isDesktop()
+        ) {
+
+            widget.style.left =
+                "auto";
+
+            widget.style.right =
+                "12px";
+
+            widget.style.top =
+                "76px";
+
+            widget.classList.remove(
+                "parijat-player-minimized"
+            );
+
+            displayMode =
+                "expanded";
+
+            return;
+        }
+
+
+        restorePosition();
+        restoreDisplayMode();
     }
 
 
@@ -2192,7 +2766,9 @@
         document.addEventListener(
             "DOMContentLoaded",
             init,
-            { once: true }
+            {
+                once: true
+            }
         );
 
     } else {
