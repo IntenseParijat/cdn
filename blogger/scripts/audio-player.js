@@ -2064,15 +2064,10 @@
 
     function init() {
 
-        widget =
-            document.getElementById(
-                "HTML1"
-            );
+        const widget = document.createElement("div");
+        widget.id = "parijat-floating-player";
 
-        player =
-            document.getElementById(
-                "player"
-            );
+        document.body.appendChild(widget);
 
         if (
             !widget ||
