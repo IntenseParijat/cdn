@@ -1,59 +1,128 @@
 (function () {
     "use strict";
 
+    /* =========================================================
+       CONFIGURATION
+       ========================================================= */
+
+    const PLAYER_ID = "parijat-floating-player";
+
     const PLAYLIST_URL =
         "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/blogger/scripts/playlist.json";
 
-    const PLAYER_ID = "parijat-floating-player";
-    const MOBILE_BREAKPOINT = 768;
-    const MARGIN = 16;
+    /*
+     * Below this width the player becomes a smaller,
+     * screen-friendly floating player.
+     *
+     * It is NOT placed in Blogger's sidebar.
+     */
+    const SMALL_SCREEN_WIDTH = 768;
+
+    const VIEWPORT_MARGIN = 16;
 
     const STORAGE = {
-        track: "cyberPlayerTrack",
-        time: "cyberPlayerTime",
-        volume: "cyberPlayerVolume",
-        muted: "cyberPlayerMuted",
-        playing: "cyberPlayerPlaying",
-        mode: "cyberPlayerMode",
-        displayMode: "cyberPlayerDisplayMode",
-        left: "floatingMusicPlayerLeft",
-        top: "floatingMusicPlayerTop"
+        track: "parijatPlayer.track",
+        time: "parijatPlayer.time",
+        volume: "parijatPlayer.volume",
+        muted: "parijatPlayer.muted",
+        playing: "parijatPlayer.playing",
+        mode: "parijatPlayer.mode",
+        display: "parijatPlayer.displayMode",
+        left: "parijatPlayer.left",
+        top: "parijatPlayer.top"
     };
 
-    let widget = null;
+
+    /* =========================================================
+       STATE
+       ========================================================= */
+
+    let tracks = [];
+    let currentTrack = 0;
+
+    /*
+     * 0 = sequential
+     * 1 = shuffle
+     * 2 = repeat
+     */
+    let playMode = 0;
+
+    /*
+     * expanded / minimized
+     */
+    let displayMode = "expanded";
+
+    let playerRoot = null;
     let player = null;
     let audio = null;
 
+    let prevBtn = null;
     let playBtn = null;
     let nextBtn = null;
-    let prevBtn = null;
+
     let seekbar = null;
+
     let trackTitle = null;
     let trackArtist = null;
-    let volumeBar = null;
+
     let muteBtn = null;
+    let volumeBar = null;
     let modeBtn = null;
 
     let minimizeBtn = null;
     let bubble = null;
 
-    let tracks = [];
-    let currentTrack = 0;
-    let playMode = 0;
-    let displayMode = "expanded";
-
     let originalTitle = document.title;
 
-    let pendingResume = false;
+    /*
+     * Used when the browser blocks autoplay.
+     * The saved intent remains "playing".
+     */
+    let shouldBePlaying = false;
 
+    /*
+     * Drag state.
+     */
     let dragging = false;
     let dragMoved = false;
-    let dragPointerId = null;
 
-    let dragStartX = 0;
-    let dragStartY = 0;
+    let pointerId = null;
+
+    let dragStartPointerX = 0;
+    let dragStartPointerY = 0;
+
     let dragStartLeft = 0;
     let dragStartTop = 0;
+
+
+    /* =========================================================
+       HELPERS
+       ========================================================= */
+
+    function isSmallScreen() {
+        return window.innerWidth <= SMALL_SCREEN_WIDTH;
+    }
+
+
+    function clamp(value, min, max) {
+        return Math.max(
+            min,
+            Math.min(value, max)
+        );
+    }
+
+
+    function readNumber(key, fallback) {
+
+        const value =
+            Number(
+                localStorage.getItem(key)
+            );
+
+        return Number.isFinite(value)
+            ? value
+            : fallback;
+    }
 
 
     /* =========================================================
@@ -61,98 +130,144 @@
        ========================================================= */
 
     const PLAYER_HTML = `
-    <div class="cyber-player" id="player">
+    <div class="parijat-player">
 
-      <div class="glow"></div>
+      <div class="parijat-glow"></div>
 
-      <div class="top-row">
+      <div class="parijat-top-row">
 
-        <button id="prevBtn">
-          <svg viewBox="0 0 24 24"
-               width="24"
-               height="24"
-               fill="white">
-            <path d="M6 6h2v12H6zm3.5 6L18 18V6z"/>
+        <button
+          type="button"
+          class="parijat-control"
+          id="parijat-prev"
+          aria-label="Previous track">
+
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="white">
+
+            <path
+              d="M6 6h2v12H6zm3.5 6L18 18V6z"/>
           </svg>
+
         </button>
 
-        <button id="playBtn">
-          <svg id="playIcon"
-               viewBox="0 0 24 24"
-               width="24"
-               height="24"
-               fill="white">
-            <path d="M8 5v14l11-7z"/>
+
+        <button
+          type="button"
+          class="parijat-control"
+          id="parijat-play"
+          aria-label="Play">
+
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="white">
+
+            <path
+              d="M8 5v14l11-7z"/>
           </svg>
+
         </button>
 
-        <button id="nextBtn">
-          <svg viewBox="0 0 24 24"
-               width="24"
-               height="24"
-               fill="white">
-            <path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/>
+
+        <button
+          type="button"
+          class="parijat-control"
+          id="parijat-next"
+          aria-label="Next track">
+
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="white">
+
+            <path
+              d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/>
           </svg>
+
         </button>
 
       </div>
 
-      <div class="track-info">
 
-        <div class="track-title" id="trackTitle">
+      <div class="parijat-track-info">
+
+        <div
+          id="parijat-track-title"
+          class="parijat-track-title">
           LOADING...
         </div>
 
-        <div class="track-artist" id="trackArtist"></div>
+        <div
+          id="parijat-track-artist"
+          class="parijat-track-artist">
+        </div>
 
       </div>
 
-      <div class="equalizer">
+
+      <div class="parijat-equalizer">
+
         <span></span>
         <span></span>
         <span></span>
         <span></span>
         <span></span>
+
       </div>
 
-      <div class="seekbar-container">
+
+      <div class="parijat-seek-row">
 
         <input
           type="range"
-          id="seekbar"
-          value="0"
+          id="parijat-seek"
           min="0"
           max="100"
           step="0.01"
-        />
+          value="0"
+          aria-label="Seek">
 
         <button
-          id="modeBtn"
-          class="mode-btn"
+          type="button"
+          id="parijat-mode"
+          class="parijat-round-button"
           aria-label="Playback mode">
         </button>
 
       </div>
 
-      <div class="volume-container">
+
+      <div class="parijat-volume-row">
 
         <button
-          id="muteBtn"
+          type="button"
+          id="parijat-mute"
+          class="parijat-round-button"
           aria-label="Mute">
         </button>
 
         <input
           type="range"
-          id="volumeBar"
+          id="parijat-volume"
           min="0"
           max="1"
           step="0.01"
           value="1"
-        />
+          aria-label="Volume">
 
       </div>
 
-      <audio id="audio"></audio>
+
+      <audio
+        id="parijat-audio"
+        preload="metadata">
+      </audio>
 
     </div>
   `;
@@ -163,17 +278,18 @@
        ========================================================= */
 
     const PLAYER_CSS = `
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap');
-
     #${PLAYER_ID} {
+
       position: fixed;
 
       top: 85px;
       right: 32px;
+
       left: auto;
 
       width: 360px;
-      max-width: calc(100vw - 24px);
+      max-width:
+        calc(100vw - 24px);
 
       margin: 0;
       padding: 0;
@@ -190,6 +306,8 @@
       touch-action: none;
 
       cursor: grab;
+
+      box-sizing: border-box;
     }
 
 
@@ -198,17 +316,18 @@
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        MAIN PLAYER
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .cyber-player {
-      box-sizing: border-box;
+    #${PLAYER_ID} .parijat-player {
 
       position: relative;
 
       width: 100%;
       max-width: 360px;
+
+      box-sizing: border-box;
 
       padding: 20px;
 
@@ -217,17 +336,20 @@
       background:
         linear-gradient(
           145deg,
-          rgba(20,20,20,0.95),
-          rgba(35,35,35,0.85)
+          rgba(20,20,20,.96),
+          rgba(35,35,35,.88)
         );
 
       border:
         1px solid
-        rgba(255,115,87,0.25);
+        rgba(255,115,87,.25);
 
       box-shadow:
-        0 0 25px rgba(255,115,87,0.12),
-        inset 0 0 25px rgba(255,255,255,0.03);
+        0 0 25px
+        rgba(255,115,87,.12),
+
+        inset 0 0 25px
+        rgba(255,255,255,.03);
 
       overflow: hidden;
 
@@ -237,7 +359,7 @@
     }
 
 
-    #${PLAYER_ID} .glow {
+    #${PLAYER_ID} .parijat-glow {
 
       position: absolute;
 
@@ -246,32 +368,37 @@
       background:
         radial-gradient(
           circle at center,
-          rgba(255,115,87,0.12),
+          rgba(255,115,87,.12),
           transparent 70%
         );
 
       opacity: 0;
 
-      transition: 0.5s;
+      transition:
+        opacity .4s ease;
 
       pointer-events: none;
     }
 
 
-    #${PLAYER_ID} .cyber-player.playing .glow {
+    #${PLAYER_ID} .parijat-player.playing
+      .parijat-glow {
+
       opacity: 1;
     }
 
 
-    /* ---------------------------------------------------------
-       TOP CONTROLS
-       --------------------------------------------------------- */
+    /* =======================================================
+       TOP BUTTONS
+       ======================================================= */
 
-    #${PLAYER_ID} .top-row {
+    #${PLAYER_ID} .parijat-top-row {
 
       display: flex;
 
       justify-content: center;
+
+      align-items: center;
 
       gap: 16px;
 
@@ -279,7 +406,7 @@
     }
 
 
-    #${PLAYER_ID} .top-row button {
+    #${PLAYER_ID} .parijat-control {
 
       width: 58px;
       height: 58px;
@@ -288,12 +415,12 @@
 
       border-radius: 50%;
 
-      cursor: pointer !important;
-
       display: flex;
 
       align-items: center;
       justify-content: center;
+
+      padding: 0;
 
       color: white;
 
@@ -305,32 +432,32 @@
         );
 
       box-shadow:
-        0 0 18px rgba(255,115,87,0.4);
+        0 0 18px
+        rgba(255,115,87,.4);
 
-      transition: 0.25s;
+      cursor: pointer !important;
 
-      position: relative;
-
-      z-index: 2;
-
-      pointer-events: auto;
+      transition:
+        transform .2s ease,
+        box-shadow .2s ease;
     }
 
 
-    #${PLAYER_ID} .top-row button:hover {
+    #${PLAYER_ID} .parijat-control:hover {
 
       transform: scale(1.08);
 
       box-shadow:
-        0 0 25px rgba(255,115,87,0.8);
+        0 0 25px
+        rgba(255,115,87,.8);
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        TRACK INFORMATION
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .track-info {
+    #${PLAYER_ID} .parijat-track-info {
 
       width: 100%;
 
@@ -346,12 +473,15 @@
     }
 
 
-    #${PLAYER_ID} .track-title {
+    #${PLAYER_ID} .parijat-track-title {
+
+      width: 100%;
 
       color: #ffffff;
 
       font-family:
-        'Orbitron',
+        Orbitron,
+        Arial,
         sans-serif;
 
       font-size: 12px;
@@ -362,21 +492,24 @@
 
       line-height: 1.4;
 
-      word-break: break-word;
-
       overflow-wrap: anywhere;
+
+      word-break: break-word;
     }
 
 
-    #${PLAYER_ID} .track-artist {
+    #${PLAYER_ID} .parijat-track-artist {
 
-      margin-top: 4px;
+      width: 100%;
+
+      margin-top: 5px;
 
       color:
         rgba(255,255,255,.55);
 
       font-family:
-        'Orbitron',
+        Orbitron,
+        Arial,
         sans-serif;
 
       font-size: 10px;
@@ -387,17 +520,17 @@
 
       line-height: 1.3;
 
-      word-break: break-word;
-
       overflow-wrap: anywhere;
+
+      word-break: break-word;
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        EQUALIZER
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .equalizer {
+    #${PLAYER_ID} .parijat-equalizer {
 
       display: flex;
 
@@ -413,20 +546,24 @@
     }
 
 
-    #${PLAYER_ID} .equalizer span {
+    #${PLAYER_ID}
+      .parijat-equalizer span {
 
       width: 5px;
 
+      height: 10px;
+
       border-radius: 20px;
 
-      background: #ff7357;
+      background:
+        #ff7357;
 
       box-shadow:
         0 0 12px
-        rgba(255,115,87,0.8);
+        rgba(255,115,87,.8);
 
       animation:
-        parijat-eq
+        parijat-equalizer
         1s infinite ease-in-out;
 
       animation-play-state:
@@ -434,8 +571,9 @@
     }
 
 
-    #${PLAYER_ID} .cyber-player.playing
-      .equalizer span {
+    #${PLAYER_ID}
+      .parijat-player.playing
+      .parijat-equalizer span {
 
       animation-play-state:
         running;
@@ -443,34 +581,54 @@
 
 
     #${PLAYER_ID}
-      .equalizer span:nth-child(1) {
-      animation-delay: 0s;
+      .parijat-equalizer
+      span:nth-child(1) {
+
+      animation-delay:
+        0s;
     }
+
 
     #${PLAYER_ID}
-      .equalizer span:nth-child(2) {
-      animation-delay: .15s;
+      .parijat-equalizer
+      span:nth-child(2) {
+
+      animation-delay:
+        .15s;
     }
+
 
     #${PLAYER_ID}
-      .equalizer span:nth-child(3) {
-      animation-delay: .30s;
+      .parijat-equalizer
+      span:nth-child(3) {
+
+      animation-delay:
+        .30s;
     }
+
 
     #${PLAYER_ID}
-      .equalizer span:nth-child(4) {
-      animation-delay: .45s;
+      .parijat-equalizer
+      span:nth-child(4) {
+
+      animation-delay:
+        .45s;
     }
+
 
     #${PLAYER_ID}
-      .equalizer span:nth-child(5) {
-      animation-delay: .60s;
+      .parijat-equalizer
+      span:nth-child(5) {
+
+      animation-delay:
+        .60s;
     }
 
 
-    @keyframes parijat-eq {
+    @keyframes parijat-equalizer {
 
-      0%,100% {
+      0%,
+      100% {
         height: 10px;
       }
 
@@ -480,25 +638,27 @@
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        SEEK BAR
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .seekbar-container {
+    #${PLAYER_ID} .parijat-seek-row {
+
+      width: 100%;
 
       display: flex;
 
       align-items: center;
 
       gap: 10px;
-
-      width: 100%;
     }
 
 
-    #${PLAYER_ID} #seekbar {
+    #${PLAYER_ID} #parijat-seek {
 
       flex: 1;
+
+      min-width: 0;
 
       accent-color:
         #ff7357;
@@ -507,11 +667,13 @@
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        VOLUME
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .volume-container {
+    #${PLAYER_ID} .parijat-volume-row {
+
+      width: 100%;
 
       display: flex;
 
@@ -520,55 +682,14 @@
       gap: 12px;
 
       margin-top: 14px;
-
-      width: 100%;
     }
 
 
-    #${PLAYER_ID} #muteBtn {
-
-      width: 38px;
-      height: 38px;
-
-      border: none;
-
-      border-radius: 50%;
-
-      cursor: pointer;
-
-      display: flex;
-
-      align-items: center;
-      justify-content: center;
-
-      background:
-        linear-gradient(
-          145deg,
-          #ff7357,
-          #ff512f
-        );
-
-      box-shadow:
-        0 0 12px
-        rgba(255,115,87,0.4);
-
-      transition: .25s;
-    }
-
-
-    #${PLAYER_ID} #muteBtn:hover {
-
-      transform: scale(1.08);
-
-      box-shadow:
-        0 0 18px
-        rgba(255,115,87,0.8);
-    }
-
-
-    #${PLAYER_ID} #volumeBar {
+    #${PLAYER_ID} #parijat-volume {
 
       flex: 1;
+
+      min-width: 0;
 
       accent-color:
         #ff7357;
@@ -577,22 +698,23 @@
     }
 
 
-    /* ---------------------------------------------------------
-       PLAY MODE BUTTON
-       --------------------------------------------------------- */
+    /* =======================================================
+       ROUND BUTTONS
+       ======================================================= */
 
-    #${PLAYER_ID} .mode-btn {
+    #${PLAYER_ID}
+      .parijat-round-button {
 
       width: 38px;
       height: 38px;
 
       min-width: 38px;
 
+      padding: 0;
+
       border: none;
 
       border-radius: 50%;
-
-      cursor: pointer;
 
       display: flex;
 
@@ -608,34 +730,40 @@
 
       box-shadow:
         0 0 12px
-        rgba(255,115,87,0.4);
+        rgba(255,115,87,.4);
 
-      transition: .25s;
+      cursor: pointer !important;
+
+      transition:
+        transform .2s ease,
+        box-shadow .2s ease;
     }
 
 
-    #${PLAYER_ID} .mode-btn:hover {
+    #${PLAYER_ID}
+      .parijat-round-button:hover {
 
       transform: scale(1.08);
 
       box-shadow:
         0 0 18px
-        rgba(255,115,87,0.8);
+        rgba(255,115,87,.8);
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        MINIMIZE BUTTON
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    #${PLAYER_ID} .floating-minimize-btn {
+    #${PLAYER_ID}
+      .parijat-minimize {
 
       position: absolute;
 
       top: 7px;
       right: 7px;
 
-      z-index: 10;
+      z-index: 5;
 
       width: 28px;
       height: 28px;
@@ -651,70 +779,69 @@
       background:
         rgba(20,20,20,.72);
 
-      color: #ffffff;
-
-      font:
-        700 18px/26px
-        Arial,sans-serif;
-
-      cursor: pointer !important;
+      color: white;
 
       display: flex;
 
       align-items: center;
       justify-content: center;
+
+      font:
+        700 18px/1
+        Arial,
+        sans-serif;
+
+      cursor: pointer !important;
     }
 
 
-    /* ---------------------------------------------------------
-       MINIMIZED BUBBLE
-       --------------------------------------------------------- */
+    /* =======================================================
+       MINIMIZED MODE
+       ======================================================= */
 
-    #${PLAYER_ID}
-      .music-player-bubble {
-
-      display: none;
-    }
-
-
-    #${PLAYER_ID}.parijat-player-minimized {
+    #${PLAYER_ID}.minimized {
 
       width: 58px;
+      height: 58px;
 
       max-width: 58px;
+    }
 
+
+    #${PLAYER_ID}.minimized
+      .parijat-player {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}.minimized
+      .parijat-minimize {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}
+      .parijat-bubble {
+
+      display: none;
+    }
+
+
+    #${PLAYER_ID}.minimized
+      .parijat-bubble {
+
+      width: 58px;
       height: 58px;
-    }
 
+      display: flex;
 
-    #${PLAYER_ID}.parijat-player-minimized
-      #player {
-
-      display: none;
-    }
-
-
-    #${PLAYER_ID}.parijat-player-minimized
-      .floating-minimize-btn {
-
-      display: none;
-    }
-
-
-    #${PLAYER_ID}.parijat-player-minimized
-      .music-player-bubble {
+      align-items: center;
+      justify-content: center;
 
       position: relative;
 
-      display: flex;
-
-      align-items: center;
-      justify-content: center;
-
-      width: 58px;
-      height: 58px;
-
-      margin: 0;
       padding: 0;
 
       border:
@@ -730,15 +857,14 @@
           #121212
         );
 
-      color: #ffffff;
+      color: white;
 
       font-size: 28px;
-
       line-height: 1;
 
-      cursor: pointer !important;
-
       box-sizing: border-box;
+
+      cursor: pointer !important;
 
       box-shadow:
         0 0 20px
@@ -752,11 +878,14 @@
 
 
     /*
-     * Loading-style ring around the bubble.
+     * Rotating loading ring.
+     *
+     * Nothing appears beside the bubble.
+     * The ring itself rotates around it.
      */
 
-    #${PLAYER_ID}.parijat-player-minimized
-      .music-player-bubble::after {
+    #${PLAYER_ID}.minimized
+      .parijat-bubble::after {
 
       content: "";
 
@@ -771,14 +900,11 @@
       background:
         conic-gradient(
           from 0deg,
-
           transparent 0deg,
-          transparent 45deg,
-
-          #ff7357 90deg,
-          #ff7357 135deg,
-
-          transparent 180deg,
+          transparent 50deg,
+          #ff7357 95deg,
+          #ff7357 145deg,
+          transparent 190deg,
           transparent 360deg
         );
 
@@ -797,37 +923,39 @@
         );
 
       animation:
-        parijat-player-loading
+        parijat-loading-ring
         1s linear infinite;
 
       pointer-events: none;
     }
 
 
-    #${PLAYER_ID}.parijat-player-minimized
-      .music-player-bubble.is-playing::after {
+    #${PLAYER_ID}.minimized
+      .parijat-bubble.playing::after {
 
       display: block;
     }
 
 
-    @keyframes parijat-player-loading {
+    @keyframes parijat-loading-ring {
 
       from {
-        transform: rotate(0deg);
+        transform:
+          rotate(0deg);
       }
 
       to {
-        transform: rotate(360deg);
+        transform:
+          rotate(360deg);
       }
     }
 
 
-    /* ---------------------------------------------------------
+    /* =======================================================
        SMALL SCREENS
-       --------------------------------------------------------- */
+       ======================================================= */
 
-    @media (max-width: 600px) {
+    @media (max-width: 768px) {
 
       #${PLAYER_ID} {
 
@@ -840,6 +968,17 @@
             360px,
             calc(100vw - 24px)
           );
+
+        max-width:
+          calc(100vw - 24px);
+      }
+
+
+      #${PLAYER_ID}
+        .parijat-control {
+
+        width: 50px;
+        height: 50px;
       }
     }
   `;
@@ -856,16 +995,18 @@
                 PLAYER_ID
             )
         ) {
-            return false;
+            return;
         }
 
 
         const style =
-            document.createElement("style");
+            document.createElement(
+                "style"
+            );
 
         style.id =
             PLAYER_ID +
-            "-styles";
+            "-style";
 
         style.textContent =
             PLAYER_CSS;
@@ -875,79 +1016,80 @@
         );
 
 
-        widget =
-            document.createElement("div");
+        playerRoot =
+            document.createElement(
+                "div"
+            );
 
-        widget.id =
+        playerRoot.id =
             PLAYER_ID;
 
-        widget.innerHTML =
+        playerRoot.innerHTML =
             PLAYER_HTML;
 
+
         document.body.appendChild(
-            widget
+            playerRoot
         );
 
 
         player =
-            widget.querySelector(
-                "#player"
+            playerRoot.querySelector(
+                ".parijat-player"
             );
 
         audio =
-            widget.querySelector(
-                "#audio"
-            );
-
-        playBtn =
-            widget.querySelector(
-                "#playBtn"
-            );
-
-        nextBtn =
-            widget.querySelector(
-                "#nextBtn"
+            playerRoot.querySelector(
+                "#parijat-audio"
             );
 
         prevBtn =
-            widget.querySelector(
-                "#prevBtn"
+            playerRoot.querySelector(
+                "#parijat-prev"
+            );
+
+        playBtn =
+            playerRoot.querySelector(
+                "#parijat-play"
+            );
+
+        nextBtn =
+            playerRoot.querySelector(
+                "#parijat-next"
             );
 
         seekbar =
-            widget.querySelector(
-                "#seekbar"
+            playerRoot.querySelector(
+                "#parijat-seek"
             );
 
         trackTitle =
-            widget.querySelector(
-                "#trackTitle"
+            playerRoot.querySelector(
+                "#parijat-track-title"
             );
 
         trackArtist =
-            widget.querySelector(
-                "#trackArtist"
-            );
-
-        volumeBar =
-            widget.querySelector(
-                "#volumeBar"
+            playerRoot.querySelector(
+                "#parijat-track-artist"
             );
 
         muteBtn =
-            widget.querySelector(
-                "#muteBtn"
+            playerRoot.querySelector(
+                "#parijat-mute"
+            );
+
+        volumeBar =
+            playerRoot.querySelector(
+                "#parijat-volume"
             );
 
         modeBtn =
-            widget.querySelector(
-                "#modeBtn"
+            playerRoot.querySelector(
+                "#parijat-mode"
             );
 
 
-        /* ---------------------------------------------------------
-           Minimize control
-           --------------------------------------------------------- */
+        /* Minimize control */
 
         minimizeBtn =
             document.createElement(
@@ -958,23 +1100,21 @@
             "button";
 
         minimizeBtn.className =
-            "floating-minimize-btn";
+            "parijat-minimize";
 
         minimizeBtn.textContent =
             "−";
 
         minimizeBtn.title =
-            "Minimize player";
+            "Minimize music player";
 
         minimizeBtn.setAttribute(
             "aria-label",
-            "Minimize player"
+            "Minimize music player"
         );
 
 
-        /* ---------------------------------------------------------
-           Bubble
-           --------------------------------------------------------- */
+        /* Bubble */
 
         bubble =
             document.createElement(
@@ -985,7 +1125,7 @@
             "button";
 
         bubble.className =
-            "music-player-bubble";
+            "parijat-bubble";
 
         bubble.textContent =
             "🎵";
@@ -999,15 +1139,13 @@
         );
 
 
-        widget.appendChild(
+        playerRoot.appendChild(
             minimizeBtn
         );
 
-        widget.appendChild(
+        playerRoot.appendChild(
             bubble
         );
-
-        return true;
     }
 
 
@@ -1017,8 +1155,14 @@
 
     function updateTabTitle() {
 
+        if (!trackTitle) {
+            return;
+        }
+
+
         const name =
-            trackTitle?.textContent?.trim();
+            trackTitle.textContent.trim();
+
 
         if (
             !name ||
@@ -1026,20 +1170,184 @@
             name === "PLAYLIST EMPTY" ||
             name === "FAILED TO LOAD PLAYLIST"
         ) {
+
             document.title =
                 originalTitle;
 
             return;
         }
 
+
         document.title =
-            name.toUpperCase() +
+            name +
             " • About Parijat";
     }
 
 
     /* =========================================================
-       PLAYER STATE
+       PLAY BUTTON UI
+       ========================================================= */
+
+    function updatePlayButton(
+        playing
+    ) {
+
+        if (playing) {
+
+            playBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="24"
+          height="24"
+          fill="white">
+
+          <path
+            d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+        </svg>
+      `;
+
+        } else {
+
+            playBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="24"
+          height="24"
+          fill="white">
+
+          <path
+            d="M8 5v14l11-7z"/>
+        </svg>
+      `;
+        }
+
+
+        player.classList.toggle(
+            "playing",
+            playing
+        );
+
+
+        bubble.classList.toggle(
+            "playing",
+            playing
+        );
+    }
+
+
+    /* =========================================================
+       MUTE UI
+       ========================================================= */
+
+    function updateMuteButton() {
+
+        const muted =
+            audio.muted ||
+            audio.volume === 0;
+
+
+        if (muted) {
+
+            muteBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="white">
+
+          <path
+            d="M16.5 12L19 14.5L17.5 16L15 13.5L12.5 16L11 14.5L13.5 12L11 9.5L12.5 8L15 10.5L17.5 8L19 9.5zM3 9v6h4l5 5V4L7 9H3z"/>
+        </svg>
+      `;
+
+        } else {
+
+            muteBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="white">
+
+          <path
+            d="M3 9v6h4l5 5V4L7 9H3z"/>
+        </svg>
+      `;
+        }
+    }
+
+
+    /* =========================================================
+       PLAY MODE UI
+       ========================================================= */
+
+    function updateModeButton() {
+
+        if (playMode === 0) {
+
+            modeBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="white">
+
+          <path
+            d="M17 17H7V14L3 18L7 22V19H19V13H17V17ZM7 7H17V10L21 6L17 2V5H5V11H7V7Z"/>
+        </svg>
+      `;
+
+        } else if (playMode === 1) {
+
+            modeBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="white">
+
+          <path
+            d="M16 3H21V8H19V6.41L14.12 11.29L12.71 9.88L17.59 5H16V3ZM4 6H6.59L16.17 15.59L14.76 17L5.17 7.41H4V6ZM19 17.59V16H21V21H16V19H17.59L12.71 14.12L14.12 12.71L19 17.59ZM4 18V17H6.59L8.88 14.71L10.29 16.12L8.41 18H4Z"/>
+        </svg>
+      `;
+
+        } else {
+
+            modeBtn.innerHTML = `
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="white">
+
+          <path
+            d="M7 7H17V10L21 6L17 2V5H5V11H7V7ZM17 17H7V14L3 18L7 22V19H19V13H17V17Z"/>
+
+          <circle
+            cx="7"
+            cy="18"
+            r="4"
+            fill="white"/>
+
+          <text
+            x="7"
+            y="20"
+            text-anchor="middle"
+            font-size="5"
+            fill="#ff512f"
+            font-family="Arial"
+            font-weight="bold">
+            1
+          </text>
+
+        </svg>
+      `;
+        }
+    }
+
+
+    /* =========================================================
+       SAVE PLAYER STATE
        ========================================================= */
 
     function saveState() {
@@ -1048,21 +1356,25 @@
             return;
         }
 
+
         try {
 
             localStorage.setItem(
                 STORAGE.track,
-                String(
-                    currentTrack
-                )
+                String(currentTrack)
             );
 
+
+            /*
+             * Exact current time.
+             */
             localStorage.setItem(
                 STORAGE.time,
                 String(
                     audio.currentTime || 0
                 )
             );
+
 
             localStorage.setItem(
                 STORAGE.volume,
@@ -1071,6 +1383,7 @@
                 )
             );
 
+
             localStorage.setItem(
                 STORAGE.muted,
                 String(
@@ -1078,40 +1391,58 @@
                 )
             );
 
+
+            /*
+             * Save desired playback state,
+             * not merely whether playback happened
+             * to succeed on this particular load.
+             */
             localStorage.setItem(
                 STORAGE.playing,
                 String(
-                    !audio.paused
+                    shouldBePlaying
                 )
             );
+
 
             localStorage.setItem(
                 STORAGE.mode,
-                String(
-                    playMode
-                )
+                String(playMode)
             );
+
 
             localStorage.setItem(
-                STORAGE.displayMode,
-                displayMode
+                STORAGE.display,
+                String(displayMode)
             );
 
-        } catch (_) { }
+        } catch (error) {
+
+            console.warn(
+                "[Cyber Player] Could not save state:",
+                error
+            );
+        }
     }
 
+
+    /* =========================================================
+       SAVE POSITION
+       ========================================================= */
 
     function savePosition() {
 
         if (
-            !widget ||
-            !isDesktop()
+            !playerRoot ||
+            isSmallScreen()
         ) {
             return;
         }
 
+
         const rect =
-            widget.getBoundingClientRect();
+            playerRoot.getBoundingClientRect();
+
 
         localStorage.setItem(
             STORAGE.left,
@@ -1121,6 +1452,7 @@
                 )
             )
         );
+
 
         localStorage.setItem(
             STORAGE.top,
@@ -1134,91 +1466,30 @@
 
 
     /* =========================================================
-       VIEWPORT
+       RESTORE POSITION
        ========================================================= */
 
-    function isDesktop() {
-
-        return window.innerWidth > MOBILE_BREAKPOINT;
-
-    }
-
-
-    function clampPlayer() {
+    function restorePosition() {
 
         if (
-            !widget ||
-            !isDesktop()
+            !playerRoot ||
+            isSmallScreen()
         ) {
             return;
         }
 
-        const rect =
-            widget.getBoundingClientRect();
-
-        const maxLeft =
-            Math.max(
-                MARGIN,
-                window.innerWidth -
-                rect.width -
-                MARGIN
-            );
-
-        const maxTop =
-            Math.max(
-                MARGIN,
-                window.innerHeight -
-                rect.height -
-                MARGIN
-            );
-
-        const left =
-            Math.max(
-                MARGIN,
-                Math.min(
-                    rect.left,
-                    maxLeft
-                )
-            );
-
-        const top =
-            Math.max(
-                MARGIN,
-                Math.min(
-                    rect.top,
-                    maxTop
-                )
-            );
-
-        widget.style.left =
-            left + "px";
-
-        widget.style.top =
-            top + "px";
-
-        widget.style.right =
-            "auto";
-    }
-
-
-    function restorePosition() {
-
-        if (!isDesktop()) {
-            return;
-        }
 
         const savedLeft =
-            Number(
-                localStorage.getItem(
-                    STORAGE.left
-                )
+            readNumber(
+                STORAGE.left,
+                NaN
             );
 
+
         const savedTop =
-            Number(
-                localStorage.getItem(
-                    STORAGE.top
-                )
+            readNumber(
+                STORAGE.top,
+                NaN
             );
 
 
@@ -1231,110 +1502,218 @@
             )
         ) {
 
-            widget.style.left =
+            playerRoot.style.left =
                 savedLeft + "px";
 
-            widget.style.top =
+            playerRoot.style.top =
                 savedTop + "px";
 
-            widget.style.right =
+            playerRoot.style.right =
                 "auto";
 
         } else {
 
-            widget.style.left =
+            /*
+             * First ever visit:
+             * top-right corner.
+             */
+
+            playerRoot.style.left =
                 "auto";
 
-            widget.style.top =
+            playerRoot.style.top =
                 "85px";
 
-            widget.style.right =
+            playerRoot.style.right =
                 "32px";
         }
 
 
-        clampPlayer();
+        clampPlayerPosition();
     }
 
 
     /* =========================================================
-       DISPLAY MODE
+       BOUNDARY CHECK
        ========================================================= */
 
-    function setDisplayMode(
-        mode
-    ) {
+    function clampPlayerPosition() {
 
         if (
-            mode === "minimized"
+            !playerRoot ||
+            isSmallScreen()
         ) {
-
-            displayMode =
-                "minimized";
-
-            widget.classList.add(
-                "parijat-player-minimized"
-            );
-
-            clampPlayer();
-            savePosition();
-            saveState();
-
             return;
         }
 
 
-        expandSafely();
+        const rect =
+            playerRoot.getBoundingClientRect();
+
+
+        const maxLeft =
+            Math.max(
+                VIEWPORT_MARGIN,
+                window.innerWidth -
+                rect.width -
+                VIEWPORT_MARGIN
+            );
+
+
+        const maxTop =
+            Math.max(
+                VIEWPORT_MARGIN,
+                window.innerHeight -
+                rect.height -
+                VIEWPORT_MARGIN
+            );
+
+
+        const left =
+            clamp(
+                rect.left,
+                VIEWPORT_MARGIN,
+                maxLeft
+            );
+
+
+        const top =
+            clamp(
+                rect.top,
+                VIEWPORT_MARGIN,
+                maxTop
+            );
+
+
+        playerRoot.style.left =
+            left + "px";
+
+        playerRoot.style.top =
+            top + "px";
+
+        playerRoot.style.right =
+            "auto";
     }
 
 
-    function expandSafely() {
+    /* =========================================================
+       SAFE EXPANSION
+       ========================================================= */
 
-        if (!isDesktop()) {
+    function expandPlayer() {
+
+        if (
+            !playerRoot ||
+            isSmallScreen()
+        ) {
             return;
         }
 
 
-        const oldRect =
-            widget.getBoundingClientRect();
+        const bubbleRect =
+            playerRoot.getBoundingClientRect();
 
 
         /*
-         * Reveal the player invisibly.
+         * Keep the bubble's current location
+         * as the anchor.
          */
 
-        widget.classList.remove(
-            "parijat-player-minimized"
+        const desiredLeft =
+            bubbleRect.left;
+
+
+        const desiredTop =
+            bubbleRect.top;
+
+
+        /*
+         * Temporarily show the full player,
+         * but keep it invisible.
+         */
+
+        playerRoot.classList.remove(
+            "minimized"
         );
 
-        widget.style.visibility =
+
+        playerRoot.style.visibility =
             "hidden";
 
-        widget.style.left =
-            oldRect.left + "px";
+        playerRoot.style.left =
+            desiredLeft + "px";
 
-        widget.style.top =
-            oldRect.top + "px";
+        playerRoot.style.top =
+            desiredTop + "px";
 
-        widget.style.right =
+        playerRoot.style.right =
             "auto";
 
-
-        /*
-         * Wait for the browser to calculate
-         * the full player's dimensions.
-         */
 
         requestAnimationFrame(
             function () {
 
-                clampPlayer();
+                const rect =
+                    playerRoot.getBoundingClientRect();
+
+
+                /*
+                 * Calculate the clear visible area.
+                 */
+
+                const maxLeft =
+                    Math.max(
+                        VIEWPORT_MARGIN,
+                        window.innerWidth -
+                        rect.width -
+                        VIEWPORT_MARGIN
+                    );
+
+
+                const maxTop =
+                    Math.max(
+                        VIEWPORT_MARGIN,
+                        window.innerHeight -
+                        rect.height -
+                        VIEWPORT_MARGIN
+                    );
+
+
+                const safeLeft =
+                    clamp(
+                        desiredLeft,
+                        VIEWPORT_MARGIN,
+                        maxLeft
+                    );
+
+
+                const safeTop =
+                    clamp(
+                        desiredTop,
+                        VIEWPORT_MARGIN,
+                        maxTop
+                    );
+
+
+                /*
+                 * Position FIRST.
+                 * Render SECOND.
+                 */
+
+                playerRoot.style.left =
+                    safeLeft + "px";
+
+                playerRoot.style.top =
+                    safeTop + "px";
+
+
+                playerRoot.style.visibility =
+                    "visible";
+
 
                 displayMode =
                     "expanded";
 
-                widget.style.visibility =
-                    "visible";
 
                 savePosition();
                 saveState();
@@ -1343,167 +1722,89 @@
     }
 
 
-    function restoreDisplayMode() {
+    /* =========================================================
+       MINIMIZE / EXPAND
+       ========================================================= */
+
+    function minimizePlayer() {
 
         displayMode =
-            localStorage.getItem(
-                STORAGE.displayMode
-            ) === "minimized"
-                ? "minimized"
-                : "expanded";
-
-        if (
-            !isDesktop()
-        ) {
-
-            displayMode =
-                "expanded";
-
-            widget.classList.remove(
-                "parijat-player-minimized"
-            );
-
-            return;
-        }
+            "minimized";
 
 
-        widget.classList.toggle(
-            "parijat-player-minimized",
-            displayMode ===
+        playerRoot.classList.add(
             "minimized"
         );
+
+
+        clampPlayerPosition();
+
+        savePosition();
+        saveState();
     }
 
 
     /* =========================================================
-       PLAYBACK UI
+       PLAYBACK
        ========================================================= */
 
-    function updatePlayButton(
-        playing
-    ) {
+    async function playAudio() {
 
-        playBtn.innerHTML =
-            playing
-                ? `
-          <svg
-            viewBox="0 0 24 24"
-            width="24"
-            height="24"
-            fill="white"
-          >
-            <path d="M6 5h4v14H6zm8 0h4v14h-4z"/>
-          </svg>
-        `
-                : `
-          <svg
-            viewBox="0 0 24 24"
-            width="24"
-            height="24"
-            fill="white"
-          >
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-        `;
+        shouldBePlaying =
+            true;
 
-        player.classList.toggle(
-            "playing",
-            playing
-        );
 
-        bubble.classList.toggle(
-            "is-playing",
-            playing
-        );
+        try {
+
+            await audio.play();
+
+            updatePlayButton(
+                true
+            );
+
+            updateTabTitle();
+
+            saveState();
+
+        } catch (error) {
+
+            /*
+             * Autoplay may be blocked.
+             *
+             * We deliberately DO NOT change
+             * shouldBePlaying back to false.
+             *
+             * The user's desired state remains
+             * "playing" and can be resumed after
+             * their first interaction.
+             */
+
+            console.warn(
+                "[Cyber Player] Browser blocked autoplay:",
+                error
+            );
+
+            updatePlayButton(
+                false
+            );
+
+            saveState();
+        }
     }
 
 
-    function updateMuteButton() {
+    function pauseAudio() {
 
-        const muted =
-            audio.muted ||
-            audio.volume === 0;
+        shouldBePlaying =
+            false;
 
-        muteBtn.innerHTML =
-            muted
-                ? `
-          <svg
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            fill="white"
-          >
-            <path d="M16.5 12L19 14.5L17.5 16L15 13.5L12.5 16L11 14.5L13.5 12L11 9.5L12.5 8L15 10.5L17.5 8L19 9.5zM3 9v6h4l5 5V4L7 9H3z"/>
-          </svg>
-        `
-                : `
-          <svg
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            fill="white"
-          >
-            <path d="M3 9v6h4l5 5V4L7 9H3z"/>
-          </svg>
-        `;
-    }
+        audio.pause();
 
+        updatePlayButton(
+            false
+        );
 
-    function updateModeButton() {
-
-        const icons = [
-
-            `
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="white"
-        >
-          <path d="M17 17H7V14L3 18L7 22V19H19V13H17V17ZM7 7H17V10L21 6L17 2V5H5V11H7V7Z"/>
-        </svg>
-      `,
-
-            `
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="white"
-        >
-          <path d="M16 3H21V8H19V6.41L14.12 11.29L12.71 9.88L17.59 5H16V3ZM4 6H6.59L16.17 15.59L14.76 17L5.17 7.41H4V6ZM19 17.59V16H21V21H16V19H17.59L12.71 14.12L14.12 12.71L19 17.59ZM4 18V17H6.59L8.88 14.71L10.29 16.12L8.41 18H4Z"/>
-        </svg>
-      `,
-
-            `
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="white"
-        >
-          <path d="M7 7H17V10L21 6L17 2V5H5V11H7V7ZM17 17H7V14L3 18L7 22V19H19V13H17V17Z"/>
-          <circle
-            cx="7"
-            cy="18"
-            r="4"
-            fill="white"
-          />
-          <text
-            x="7"
-            y="20"
-            text-anchor="middle"
-            font-size="5"
-            fill="#ff512f"
-            font-family="Arial"
-            font-weight="bold"
-          >1</text>
-        </svg>
-      `
-        ];
-
-        modeBtn.innerHTML =
-            icons[playMode];
+        saveState();
     }
 
 
@@ -1512,7 +1813,8 @@
        ========================================================= */
 
     function loadTrack(
-        index
+        index,
+        restoreSavedTime
     ) {
 
         if (
@@ -1523,17 +1825,18 @@
 
 
         currentTrack =
-            Math.max(
+            clamp(
+                index,
                 0,
-                Math.min(
-                    index,
-                    tracks.length - 1
-                )
+                tracks.length - 1
             );
 
 
         const track =
             tracks[currentTrack];
+
+
+        audio.pause();
 
 
         audio.src =
@@ -1551,364 +1854,95 @@
 
 
         updateTabTitle();
-    }
 
 
-    /* =========================================================
-       PLAYLIST
-       ========================================================= */
-
-    async function loadPlaylist() {
-
-        try {
-
-            const response =
-                await fetch(
-                    PLAYLIST_URL,
-                    {
-                        cache: "no-cache"
-                    }
-                );
+        seekbar.value =
+            "0";
 
 
-            if (!response.ok) {
+        /*
+         * Only restore the saved time when
+         * this is page initialization.
+         *
+         * Normal next/previous actions start
+         * the new track from zero.
+         */
 
-                throw new Error(
-                    "Playlist request failed: " +
-                    response.status
-                );
-            }
+        if (
+            restoreSavedTime
+        ) {
 
-
-            const data =
-                await response.json();
-
-
-            if (!Array.isArray(data)) {
-
-                throw new Error(
-                    "Playlist JSON is not an array"
-                );
-            }
-
-
-            tracks =
-                data
-                    .map(
-                        function (track) {
-
-                            return {
-
-                                title:
-                                    String(
-                                        track?.title ||
-                                        "UNTITLED"
-                                    ),
-
-                                artist:
-                                    String(
-                                        track?.artist ||
-                                        ""
-                                    ),
-
-                                src:
-                                    String(
-                                        track?.src ||
-                                        ""
-                                    )
-                            };
-                        }
+            const savedTime =
+                Math.max(
+                    0,
+                    readNumber(
+                        STORAGE.time,
+                        0
                     )
-                    .filter(
-                        function (track) {
-                            return !!track.src;
-                        }
+                );
+
+
+            function restoreTime() {
+
+                if (
+                    !Number.isFinite(
+                        audio.duration
+                    ) ||
+                    audio.duration <= 0
+                ) {
+                    return;
+                }
+
+
+                audio.currentTime =
+                    Math.min(
+                        savedTime,
+                        Math.max(
+                            0,
+                            audio.duration - 0.01
+                        )
                     );
 
 
-            if (!tracks.length) {
-
-                trackTitle.textContent =
-                    "PLAYLIST EMPTY";
-
-                return;
-            }
-
-
-            currentTrack =
-                Math.max(
-                    0,
-                    Math.min(
-                        n(
-                            localStorage.getItem(
-                                STORAGE.track
-                            ),
-                            0
-                        ),
-                        tracks.length - 1
-                    )
-                );
-
-
-            playMode =
-                Math.max(
-                    0,
-                    Math.min(
-                        2,
-                        n(
-                            localStorage.getItem(
-                                STORAGE.mode
-                            ),
-                            0
-                        )
-                    )
-                );
-
-
-            loadTrack(
-                currentTrack
-            );
-
-
-            restoreState();
-
-        } catch (error) {
-
-            console.error(
-                "[Cyber Player]",
-                error
-            );
-
-            trackTitle.textContent =
-                "FAILED TO LOAD PLAYLIST";
-        }
-    }
-
-
-    /* =========================================================
-       RESTORE AUDIO STATE
-       ========================================================= */
-
-    function restoreState() {
-
-        const savedTime =
-            Math.max(
-                0,
-                n(
-                    localStorage.getItem(
-                        STORAGE.time
-                    ),
-                    0
-                )
-            );
-
-
-        const savedVolume =
-            Math.max(
-                0,
-                Math.min(
-                    1,
-                    n(
-                        localStorage.getItem(
-                            STORAGE.volume
-                        ),
-                        1
-                    )
-                )
-            );
-
-
-        const savedMuted =
-            localStorage.getItem(
-                STORAGE.muted
-            ) === "true";
-
-
-        const savedPlaying =
-            localStorage.getItem(
-                STORAGE.playing
-            ) === "true";
-
-
-        audio.volume =
-            savedVolume;
-
-        audio.muted =
-            savedMuted;
-
-        volumeBar.value =
-            savedVolume;
-
-
-        updateMuteButton();
-        updateModeButton();
-
-
-        const restoreTime =
-            function () {
-
-                if (
-                    Number.isFinite(
-                        audio.duration
-                    ) &&
-                    audio.duration > 0
-                ) {
-
-                    audio.currentTime =
-                        Math.min(
-                            savedTime,
-                            Math.max(
-                                0,
-                                audio.duration - 0.01
-                            )
-                        );
-
-
-                    seekbar.value =
+                seekbar.value =
+                    String(
                         (
                             audio.currentTime /
                             audio.duration
-                        ) * 100;
-                }
-            };
+                        ) * 100
+                    );
+            }
 
 
-        if (
-            audio.readyState >= 1
-        ) {
+            if (
+                audio.readyState >= 1
+            ) {
 
-            restoreTime();
+                restoreTime();
 
-        } else {
+            } else {
 
-            audio.addEventListener(
-                "loadedmetadata",
-                restoreTime,
-                {
-                    once: true
-                }
-            );
-        }
-
-
-        if (
-            savedPlaying
-        ) {
-
-            pendingResume =
-                true;
-
-            tryResume();
-
-        } else {
-
-            pendingResume =
-                false;
-
-            audio.pause();
-
-            updatePlayButton(
-                false
-            );
-        }
-
-
-        restoreDisplayMode();
-    }
-
-
-    /* =========================================================
-       AUTOPLAY RESUME
-       ========================================================= */
-
-    async function tryResume() {
-
-        if (
-            !pendingResume
-        ) {
-            return;
-        }
-
-
-        try {
-
-            await audio.play();
-
-            pendingResume =
-                false;
-
-            updatePlayButton(
-                true
-            );
-
-        } catch (_) {
-
-            /*
-             * Browser autoplay policy.
-             * The saved state stays intact.
-             */
+                audio.addEventListener(
+                    "loadedmetadata",
+                    restoreTime,
+                    {
+                        once: true
+                    }
+                );
+            }
         }
     }
 
 
     /* =========================================================
-       PLAY / PAUSE
-       ========================================================= */
-
-    async function playAudio() {
-
-        try {
-
-            await audio.play();
-
-            pendingResume =
-                false;
-
-            updatePlayButton(
-                true
-            );
-
-            saveState();
-
-        } catch (error) {
-
-            pendingResume =
-                true;
-
-            updatePlayButton(
-                false
-            );
-
-            console.warn(
-                "[Cyber Player] Playback blocked:",
-                error
-            );
-        }
-    }
-
-
-    function pauseAudio() {
-
-        audio.pause();
-
-        pendingResume =
-            false;
-
-        updatePlayButton(
-            false
-        );
-
-        saveState();
-    }
-
-
-    /* =========================================================
-       NEXT / PREVIOUS
+       NEXT
        ========================================================= */
 
     function nextTrack() {
 
-        if (!tracks.length) {
+        if (
+            !tracks.length
+        ) {
             return;
         }
 
@@ -1948,7 +1982,8 @@
 
 
         loadTrack(
-            currentTrack
+            currentTrack,
+            false
         );
 
 
@@ -1956,9 +1991,15 @@
     }
 
 
+    /* =========================================================
+       PREVIOUS
+       ========================================================= */
+
     function previousTrack() {
 
-        if (!tracks.length) {
+        if (
+            !tracks.length
+        ) {
             return;
         }
 
@@ -1970,7 +2011,8 @@
 
 
         loadTrack(
-            currentTrack
+            currentTrack,
+            false
         );
 
 
@@ -1979,82 +2021,7 @@
 
 
     /* =========================================================
-       VOLUME
-       ========================================================= */
-
-    function updateVolume() {
-
-        audio.volume =
-            Math.max(
-                0,
-                Math.min(
-                    1,
-                    Number(
-                        volumeBar.value
-                    )
-                )
-            );
-
-
-        audio.muted =
-            audio.volume === 0;
-
-
-        updateMuteButton();
-
-        saveState();
-    }
-
-
-    function toggleMute() {
-
-        if (
-            audio.muted ||
-            audio.volume === 0
-        ) {
-
-            audio.muted =
-                false;
-
-
-            if (
-                audio.volume === 0
-            ) {
-
-                audio.volume =
-                    Math.max(
-                        0.01,
-                        n(
-                            audio.dataset.previousVolume,
-                            1
-                        )
-                    );
-
-
-                volumeBar.value =
-                    audio.volume;
-            }
-
-        } else {
-
-            audio.dataset.previousVolume =
-                String(
-                    audio.volume
-                );
-
-            audio.muted =
-                true;
-        }
-
-
-        updateMuteButton();
-
-        saveState();
-    }
-
-
-    /* =========================================================
-       PLAY MODE
+       MODE
        ========================================================= */
 
     function cycleMode() {
@@ -2066,280 +2033,7 @@
 
 
         updateModeButton();
-
         saveState();
-    }
-
-
-    /* =========================================================
-       DRAGGING
-       ========================================================= */
-
-    function beginDrag(
-        event
-    ) {
-
-        if (
-            !isDesktop()
-        ) {
-            return;
-        }
-
-
-        if (
-            event.button !== undefined &&
-            event.button !== 0
-        ) {
-            return;
-        }
-
-
-        const target =
-            event.target;
-
-
-        /*
-         * Don't drag when a player control
-         * is being clicked.
-         *
-         * The minimized bubble is the exception.
-         */
-
-        const isBubble =
-            !!target.closest(
-                ".music-player-bubble"
-            );
-
-
-        if (
-            !isBubble &&
-            target.closest(
-                "button,input,a,select,textarea"
-            )
-        ) {
-            return;
-        }
-
-
-        const rect =
-            widget.getBoundingClientRect();
-
-
-        dragging =
-            true;
-
-        dragMoved =
-            false;
-
-        dragPointerId =
-            event.pointerId;
-
-
-        dragStartX =
-            event.clientX;
-
-        dragStartY =
-            event.clientY;
-
-
-        dragStartLeft =
-            rect.left;
-
-        dragStartTop =
-            rect.top;
-
-
-        widget.classList.add(
-            "dragging"
-        );
-
-
-        document.addEventListener(
-            "pointermove",
-            handleDrag,
-            true
-        );
-
-
-        document.addEventListener(
-            "pointerup",
-            endDrag,
-            true
-        );
-
-
-        document.addEventListener(
-            "pointercancel",
-            endDrag,
-            true
-        );
-
-
-        event.preventDefault();
-    }
-
-
-    function handleDrag(
-        event
-    ) {
-
-        if (
-            !dragging ||
-            event.pointerId !==
-            dragPointerId
-        ) {
-            return;
-        }
-
-
-        const dx =
-            event.clientX -
-            dragStartX;
-
-
-        const dy =
-            event.clientY -
-            dragStartY;
-
-
-        if (
-            Math.abs(dx) > 3 ||
-            Math.abs(dy) > 3
-        ) {
-
-            dragMoved =
-                true;
-        }
-
-
-        const maxLeft =
-            Math.max(
-                MARGIN,
-                window.innerWidth -
-                widget.offsetWidth -
-                MARGIN
-            );
-
-
-        const maxTop =
-            Math.max(
-                MARGIN,
-                window.innerHeight -
-                widget.offsetHeight -
-                MARGIN
-            );
-
-
-        const left =
-            Math.max(
-                MARGIN,
-                Math.min(
-                    dragStartLeft + dx,
-                    maxLeft
-                )
-            );
-
-
-        const top =
-            Math.max(
-                MARGIN,
-                Math.min(
-                    dragStartTop + dy,
-                    maxTop
-                )
-            );
-
-
-        widget.style.left =
-            left + "px";
-
-        widget.style.top =
-            top + "px";
-
-        widget.style.right =
-            "auto";
-    }
-
-
-    function endDrag(
-        event
-    ) {
-
-        if (!dragging) {
-            return;
-        }
-
-
-        if (
-            event.pointerId !==
-            undefined &&
-            event.pointerId !==
-            dragPointerId
-        ) {
-            return;
-        }
-
-
-        dragging =
-            false;
-
-
-        dragPointerId =
-            null;
-
-
-        widget.classList.remove(
-            "dragging"
-        );
-
-
-        document.removeEventListener(
-            "pointermove",
-            handleDrag,
-            true
-        );
-
-
-        document.removeEventListener(
-            "pointerup",
-            endDrag,
-            true
-        );
-
-
-        document.removeEventListener(
-            "pointercancel",
-            endDrag,
-            true
-        );
-
-
-        savePosition();
-        saveState();
-
-
-        /*
-         * Prevent a drag of the bubble from
-         * being interpreted as a click.
-         */
-
-        if (
-            dragMoved
-        ) {
-
-            bubble.dataset.dragged =
-                "true";
-
-
-            setTimeout(
-                function () {
-
-                    delete bubble.dataset.dragged;
-
-                },
-                50
-            );
-        }
     }
 
 
@@ -2348,6 +2042,8 @@
        ========================================================= */
 
     function bindEvents() {
+
+        /* Play / pause */
 
         playBtn.addEventListener(
             "click",
@@ -2367,6 +2063,8 @@
         );
 
 
+        /* Next / previous */
+
         nextBtn.addEventListener(
             "click",
             nextTrack
@@ -2378,6 +2076,8 @@
             previousTrack
         );
 
+
+        /* Seek */
 
         seekbar.addEventListener(
             "input",
@@ -2405,23 +2105,93 @@
         );
 
 
+        /* Volume */
+
         volumeBar.addEventListener(
             "input",
-            updateVolume
+            function () {
+
+                audio.volume =
+                    clamp(
+                        Number(
+                            volumeBar.value
+                        ),
+                        0,
+                        1
+                    );
+
+
+                if (
+                    audio.volume > 0
+                ) {
+
+                    audio.muted =
+                        false;
+                }
+
+
+                updateMuteButton();
+                saveState();
+            }
         );
 
+
+        /* Mute */
 
         muteBtn.addEventListener(
             "click",
-            toggleMute
+            function () {
+
+                if (
+                    audio.muted ||
+                    audio.volume === 0
+                ) {
+
+                    audio.muted =
+                        false;
+
+
+                    if (
+                        audio.volume === 0
+                    ) {
+
+                        audio.volume =
+                            Math.max(
+                                0.01,
+                                readNumber(
+                                    STORAGE.volume,
+                                    1
+                                )
+                            );
+
+                        volumeBar.value =
+                            String(
+                                audio.volume
+                            );
+                    }
+
+                } else {
+
+                    audio.muted =
+                        true;
+                }
+
+
+                updateMuteButton();
+                saveState();
+            }
         );
 
+
+        /* Mode */
 
         modeBtn.addEventListener(
             "click",
             cycleMode
         );
 
+
+        /* Minimize */
 
         minimizeBtn.addEventListener(
             "click",
@@ -2430,12 +2200,12 @@
                 event.preventDefault();
                 event.stopPropagation();
 
-                setDisplayMode(
-                    "minimized"
-                );
+                minimizePlayer();
             }
         );
 
+
+        /* Expand */
 
         bubble.addEventListener(
             "click",
@@ -2446,34 +2216,22 @@
 
 
                 if (
-                    bubble.dataset.dragged
+                    dragMoved
                 ) {
 
-                    delete bubble.dataset.dragged;
+                    dragMoved =
+                        false;
 
                     return;
                 }
 
 
-                expandSafely();
+                expandPlayer();
             }
         );
 
 
-        audio.addEventListener(
-            "loadedmetadata",
-            function () {
-
-                if (
-                    !Number.isFinite(
-                        audio.duration
-                    )
-                ) {
-                    return;
-                }
-            }
-        );
-
+        /* Time */
 
         audio.addEventListener(
             "timeupdate",
@@ -2487,10 +2245,12 @@
                 ) {
 
                     seekbar.value =
-                        (
-                            audio.currentTime /
-                            audio.duration
-                        ) * 100;
+                        String(
+                            (
+                                audio.currentTime /
+                                audio.duration
+                            ) * 100
+                        );
                 }
 
 
@@ -2499,12 +2259,14 @@
         );
 
 
+        /* Playing */
+
         audio.addEventListener(
             "play",
             function () {
 
-                pendingResume =
-                    false;
+                shouldBePlaying =
+                    true;
 
                 updatePlayButton(
                     true
@@ -2516,6 +2278,8 @@
             }
         );
 
+
+        /* Paused */
 
         audio.addEventListener(
             "pause",
@@ -2530,12 +2294,16 @@
         );
 
 
+        /* Volume */
+
         audio.addEventListener(
             "volumechange",
             function () {
 
                 volumeBar.value =
-                    audio.volume;
+                    String(
+                        audio.volume
+                    );
 
                 updateMuteButton();
 
@@ -2544,24 +2312,52 @@
         );
 
 
+        /* Track ended */
+
         audio.addEventListener(
             "ended",
             function () {
+
+                if (
+                    playMode === 2
+                ) {
+
+                    /*
+                     * Repeat current track.
+                     */
+
+                    const repeatTime =
+                        0;
+
+                    audio.currentTime =
+                        repeatTime;
+
+                    playAudio();
+
+                    return;
+                }
+
 
                 nextTrack();
             }
         );
 
 
+        /*
+         * When autoplay was blocked, the first
+         * interaction with the document retries it.
+         */
+
         document.addEventListener(
             "pointerdown",
             function () {
 
                 if (
-                    pendingResume
+                    shouldBePlaying &&
+                    audio.paused
                 ) {
 
-                    tryResume();
+                    playAudio();
                 }
             },
             {
@@ -2575,42 +2371,17 @@
             function () {
 
                 if (
-                    pendingResume
+                    shouldBePlaying &&
+                    audio.paused
                 ) {
 
-                    tryResume();
-                }
-            },
-            {
-                passive: true
-            }
-        );
-
-
-        window.addEventListener(
-            "resize",
-            function () {
-
-                if (
-                    isDesktop()
-                ) {
-
-                    clampPlayer();
-
-                } else {
-
-                    widget.style.left =
-                        "auto";
-
-                    widget.style.right =
-                        "12px";
-
-                    widget.style.top =
-                        "76px";
+                    playAudio();
                 }
             }
         );
 
+
+        /* Save while leaving/hiding page */
 
         document.addEventListener(
             "visibilitychange",
@@ -2635,10 +2406,6 @@
 
                 saveState();
                 savePosition();
-
-            },
-            {
-                capture: true
             }
         );
 
@@ -2649,9 +2416,616 @@
 
                 saveState();
                 savePosition();
-
             }
         );
+
+
+        /* Resize */
+
+        window.addEventListener(
+            "resize",
+            function () {
+
+                if (
+                    isSmallScreen()
+                ) {
+
+                    playerRoot.style.left =
+                        "auto";
+
+                    playerRoot.style.right =
+                        "12px";
+
+                    playerRoot.style.top =
+                        "76px";
+
+                } else {
+
+                    restorePosition();
+                }
+            }
+        );
+
+
+        /* Drag start */
+
+        playerRoot.addEventListener(
+            "pointerdown",
+            beginDrag,
+            false
+        );
+    }
+
+
+    /* =========================================================
+       DRAG
+       ========================================================= */
+
+    function beginDrag(
+        event
+    ) {
+
+        if (
+            isSmallScreen()
+        ) {
+            return;
+        }
+
+
+        if (
+            event.button !==
+            undefined &&
+            event.button !== 0
+        ) {
+            return;
+        }
+
+
+        const target =
+            event.target;
+
+
+        /*
+         * Player controls should stay clickable.
+         */
+
+        if (
+            target.closest(
+                "button,input,select,textarea"
+            )
+        ) {
+            return;
+        }
+
+
+        const rect =
+            playerRoot.getBoundingClientRect();
+
+
+        dragging =
+            true;
+
+        dragMoved =
+            false;
+
+        pointerId =
+            event.pointerId;
+
+
+        dragStartPointerX =
+            event.clientX;
+
+        dragStartPointerY =
+            event.clientY;
+
+
+        dragStartLeft =
+            rect.left;
+
+        dragStartTop =
+            rect.top;
+
+
+        playerRoot.classList.add(
+            "dragging"
+        );
+
+
+        document.addEventListener(
+            "pointermove",
+            dragMove,
+            true
+        );
+
+
+        document.addEventListener(
+            "pointerup",
+            dragEnd,
+            true
+        );
+
+
+        document.addEventListener(
+            "pointercancel",
+            dragEnd,
+            true
+        );
+
+
+        event.preventDefault();
+    }
+
+
+    function dragMove(
+        event
+    ) {
+
+        if (
+            !dragging ||
+            event.pointerId !==
+            pointerId
+        ) {
+            return;
+        }
+
+
+        const deltaX =
+            event.clientX -
+            dragStartPointerX;
+
+
+        const deltaY =
+            event.clientY -
+            dragStartPointerY;
+
+
+        if (
+            Math.abs(deltaX) > 3 ||
+            Math.abs(deltaY) > 3
+        ) {
+
+            dragMoved =
+                true;
+        }
+
+
+        const width =
+            playerRoot.offsetWidth;
+
+
+        const height =
+            playerRoot.offsetHeight;
+
+
+        const maxLeft =
+            Math.max(
+                VIEWPORT_MARGIN,
+                window.innerWidth -
+                width -
+                VIEWPORT_MARGIN
+            );
+
+
+        const maxTop =
+            Math.max(
+                VIEWPORT_MARGIN,
+                window.innerHeight -
+                height -
+                VIEWPORT_MARGIN
+            );
+
+
+        const left =
+            clamp(
+                dragStartLeft +
+                deltaX,
+                VIEWPORT_MARGIN,
+                maxLeft
+            );
+
+
+        const top =
+            clamp(
+                dragStartTop +
+                deltaY,
+                VIEWPORT_MARGIN,
+                maxTop
+            );
+
+
+        playerRoot.style.left =
+            left + "px";
+
+        playerRoot.style.top =
+            top + "px";
+
+        playerRoot.style.right =
+            "auto";
+    }
+
+
+    function dragEnd(
+        event
+    ) {
+
+        if (
+            !dragging
+        ) {
+            return;
+        }
+
+
+        if (
+            event.pointerId !==
+            undefined &&
+            event.pointerId !==
+            pointerId
+        ) {
+            return;
+        }
+
+
+        dragging =
+            false;
+
+        pointerId =
+            null;
+
+
+        playerRoot.classList.remove(
+            "dragging"
+        );
+
+
+        document.removeEventListener(
+            "pointermove",
+            dragMove,
+            true
+        );
+
+
+        document.removeEventListener(
+            "pointerup",
+            dragEnd,
+            true
+        );
+
+
+        document.removeEventListener(
+            "pointercancel",
+            dragEnd,
+            true
+        );
+
+
+        savePosition();
+        saveState();
+    }
+
+
+    /* =========================================================
+       RESTORE EVERYTHING
+       ========================================================= */
+
+    function restoreState() {
+
+        /*
+         * Track.
+         */
+
+        const savedTrack =
+            Math.max(
+                0,
+                Math.min(
+                    readNumber(
+                        STORAGE.track,
+                        0
+                    ),
+                    Math.max(
+                        0,
+                        tracks.length - 1
+                    )
+                )
+            );
+
+
+        currentTrack =
+            savedTrack;
+
+
+        /*
+         * Mode.
+         */
+
+        playMode =
+            clamp(
+                readNumber(
+                    STORAGE.mode,
+                    0
+                ),
+                0,
+                2
+            );
+
+
+        /*
+         * Volume.
+         */
+
+        const savedVolume =
+            clamp(
+                readNumber(
+                    STORAGE.volume,
+                    1
+                ),
+                0,
+                1
+            );
+
+
+        audio.volume =
+            savedVolume;
+
+
+        volumeBar.value =
+            String(
+                savedVolume
+            );
+
+
+        /*
+         * Mute.
+         */
+
+        audio.muted =
+            localStorage.getItem(
+                STORAGE.muted
+            ) === "true";
+
+
+        /*
+         * Desired playback state.
+         */
+
+        shouldBePlaying =
+            localStorage.getItem(
+                STORAGE.playing
+            ) === "true";
+
+
+        /*
+         * Display state.
+         */
+
+        displayMode =
+            localStorage.getItem(
+                STORAGE.display
+            ) === "minimized"
+                ? "minimized"
+                : "expanded";
+
+
+        updateMuteButton();
+        updateModeButton();
+
+
+        /*
+         * Position.
+         */
+
+        if (
+            !isSmallScreen()
+        ) {
+
+            restorePosition();
+        }
+
+
+        /*
+         * Restore display mode.
+         */
+
+        if (
+            displayMode ===
+            "minimized" &&
+            !isSmallScreen()
+        ) {
+
+            playerRoot.classList.add(
+                "minimized"
+            );
+
+        } else {
+
+            playerRoot.classList.remove(
+                "minimized"
+            );
+
+            displayMode =
+                "expanded";
+        }
+    }
+
+
+    /* =========================================================
+       LOAD PLAYLIST
+       ========================================================= */
+
+    async function loadPlaylist() {
+
+        try {
+
+            const response =
+                await fetch(
+                    PLAYLIST_URL,
+                    {
+                        cache: "no-cache"
+                    }
+                );
+
+
+            if (
+                !response.ok
+            ) {
+
+                throw new Error(
+                    "Playlist HTTP " +
+                    response.status
+                );
+            }
+
+
+            const data =
+                await response.json();
+
+
+            if (
+                !Array.isArray(
+                    data
+                )
+            ) {
+
+                throw new Error(
+                    "Playlist is not an array"
+                );
+            }
+
+
+            tracks =
+                data
+                    .map(
+                        function (track) {
+
+                            return {
+
+                                title:
+                                    String(
+                                        track?.title ||
+                                        "UNTITLED"
+                                    ),
+
+                                artist:
+                                    String(
+                                        track?.artist ||
+                                        ""
+                                    ),
+
+                                src:
+                                    String(
+                                        track?.src ||
+                                        ""
+                                    )
+                            };
+                        }
+                    )
+                    .filter(
+                        function (track) {
+
+                            return !!track.src;
+                        }
+                    );
+
+
+            if (
+                !tracks.length
+            ) {
+
+                trackTitle.textContent =
+                    "PLAYLIST EMPTY";
+
+                return;
+            }
+
+
+            /*
+             * Clamp the saved track to the
+             * current playlist length.
+             */
+
+            currentTrack =
+                clamp(
+                    readNumber(
+                        STORAGE.track,
+                        0
+                    ),
+                    0,
+                    tracks.length - 1
+                );
+
+
+            loadTrack(
+                currentTrack,
+                true
+            );
+
+
+            restoreState();
+
+
+            /*
+             * restoreState() may have loaded the
+             * display mode before track metadata
+             * was available, so make sure the UI
+             * reflects it now.
+             */
+
+            updateMuteButton();
+            updateModeButton();
+
+
+            if (
+                displayMode ===
+                "minimized" &&
+                !isSmallScreen()
+            ) {
+
+                playerRoot.classList.add(
+                    "minimized"
+                );
+            }
+
+
+            /*
+             * Restore requested playback state.
+             */
+
+            if (
+                shouldBePlaying
+            ) {
+
+                /*
+                 * Wait a moment for audio metadata/
+                 * layout, then attempt playback.
+                 */
+
+                setTimeout(
+                    function () {
+
+                        playAudio();
+
+                    },
+                    0
+                );
+
+            } else {
+
+                audio.pause();
+
+                updatePlayButton(
+                    false
+                );
+            }
+
+        } catch (error) {
+
+            console.error(
+                "[Cyber Player] Playlist error:",
+                error
+            );
+
+            trackTitle.textContent =
+                "FAILED TO LOAD PLAYLIST";
+        }
     }
 
 
@@ -2674,13 +3048,13 @@
 
 
         if (
-            !widget ||
+            !playerRoot ||
             !player ||
             !audio
         ) {
 
             console.error(
-                "[Cyber Player] Failed to create player."
+                "[Cyber Player] Player creation failed."
             );
 
             return;
@@ -2689,88 +3063,52 @@
 
         bindEvents();
 
-        syncDisplayMode();
+
+        updateMuteButton();
+        updateModeButton();
+        updatePlayButton(false);
+
+
+        /*
+         * The player is created BEFORE
+         * playlist/network work begins.
+         */
 
         loadPlaylist();
 
 
         /*
-         * Frequent state saving while the page is open.
+         * Save the exact state frequently,
+         * especially the playback position.
          */
 
-        window.setInterval(
+        setInterval(
             saveState,
             250
         );
     }
 
 
-    /*
-     * Small helper used by playlist/state code.
-     */
+    /* =========================================================
+       START
+       ========================================================= */
 
-    function n(
-        value,
-        fallback
+    if (
+        document.readyState ===
+        "loading"
     ) {
 
-        const result =
-            Number(value);
+        document.addEventListener(
+            "DOMContentLoaded",
+            init,
+            {
+                once: true
+            }
+        );
 
-        return Number.isFinite(
-            result
-        )
-            ? result
-            : fallback;
+    } else {
+
+        init();
     }
-
-
-    function syncDisplayMode() {
-
-        if (
-            !isDesktop()
-        ) {
-
-            widget.style.left =
-                "auto";
-
-            widget.style.right =
-                "12px";
-
-            widget.style.top =
-                "76px";
-
-            widget.classList.remove(
-                "parijat-player-minimized"
-            );
-
-            displayMode =
-                "expanded";
-
-            return;
-        }
-
-
-        restorePosition();
-        restoreDisplayMode();
-    }
-
-
-    function startPlayer() {
-
-        if (
-            document.readyState === "loading"
-        ) {
-            document.addEventListener(
-                "DOMContentLoaded",
-                init,
-                { once: true }
-            );
-        } else {
-            init();
-        }
-    }
-
-    startPlayer();
 
 })();
