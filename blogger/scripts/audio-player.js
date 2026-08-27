@@ -38,6 +38,10 @@
     let bubble;
     let minimizeBtn;
 
+    let originalParent = null;
+    let originalNextSibling = null;
+    let desktopMoved = false;
+
     let displayMode = "expanded";
     let originalDocumentTitle = document.title;
 
@@ -1491,8 +1495,111 @@
         expandIntoAvailableSpace();
     }
 
+    function movePlayerForCurrentViewport() {
+
+        if (!widget) {
+            return;
+        }
+
+        if (isDesktop()) {
+
+            if (!desktopMoved) {
+
+                originalParent =
+                    widget.parentNode;
+
+                originalNextSibling =
+                    widget.nextSibling;
+
+                document.body.appendChild(
+                    widget
+                );
+
+                desktopMoved = true;
+            }
+
+            widget.style.position =
+                "fixed";
+
+            widget.style.width =
+                "360px";
+
+            widget.style.maxWidth =
+                "360px";
+
+            widget.style.margin =
+                "0";
+
+            widget.style.padding =
+                "0";
+
+            widget.style.zIndex =
+                "999999";
+        }
+
+        else {
+
+            if (
+                desktopMoved &&
+                originalParent
+            ) {
+
+                if (
+                    originalNextSibling &&
+                    originalNextSibling.parentNode ===
+                    originalParent
+                ) {
+
+                    originalParent.insertBefore(
+                        widget,
+                        originalNextSibling
+                    );
+
+                } else {
+
+                    originalParent.appendChild(
+                        widget
+                    );
+                }
+
+                desktopMoved =
+                    false;
+
+                widget.style.position =
+                    "";
+
+                widget.style.left =
+                    "";
+
+                widget.style.top =
+                    "";
+
+                widget.style.right =
+                    "";
+
+                widget.style.width =
+                    "";
+
+                widget.style.maxWidth =
+                    "";
+
+                widget.style.margin =
+                    "";
+
+                widget.style.padding =
+                    "";
+
+                widget.style.zIndex =
+                    "";
+            }
+        }
+    }
+
 
     function syncDesktopMode() {
+
+        movePlayerForCurrentViewport();
+
 
         if (!isDesktop()) {
 
@@ -1500,33 +1607,6 @@
                 "music-player-floating-minimized",
                 "dragging"
             );
-
-            widget.style.position =
-                "";
-
-            widget.style.left =
-                "";
-
-            widget.style.top =
-                "";
-
-            widget.style.right =
-                "";
-
-            widget.style.width =
-                "";
-
-            widget.style.maxWidth =
-                "";
-
-            widget.style.margin =
-                "";
-
-            widget.style.padding =
-                "";
-
-            widget.style.visibility =
-                "";
 
             displayMode =
                 "expanded";
@@ -1536,9 +1616,6 @@
             return;
         }
 
-
-        widget.style.visibility =
-            "visible";
 
         restorePosition();
 
@@ -1569,6 +1646,7 @@
                 "music-player-floating-minimized"
             );
         }
+
 
         updateBubbleState();
     }
@@ -2079,27 +2157,24 @@
 
         bindPlayerEvents();
 
-
         widget.addEventListener(
             "pointerdown",
             beginDrag,
             false
         );
 
+        movePlayerForCurrentViewport();
+
+        syncDesktopMode();
 
         window.addEventListener(
             "resize",
-            function () {
-
-                syncDesktopMode();
-            }
+            syncDesktopMode
         );
-
 
         window.addEventListener(
             "beforeunload",
             function () {
-
                 savePlayerState();
                 savePosition();
             }
