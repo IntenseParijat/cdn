@@ -1,3 +1,12 @@
+console.log(
+    "[About Parijat Player] audio-player.js loaded"
+);
+
+console.log(
+    "[About Parijat Player] document.readyState =",
+    document.readyState
+);
+
 (function () {
     "use strict";
 
@@ -3035,6 +3044,10 @@
 
     function init() {
 
+        console.log(
+            "[About Parijat Player] init() reached"
+        );
+
         if (
             document.getElementById(
                 PLAYER_ID
@@ -3045,6 +3058,13 @@
 
 
         createPlayer();
+
+        console.log(
+            "[About Parijat Player] player after createPlayer:",
+            document.getElementById(
+                "parijat-floating-player"
+            )
+        );
 
 
         if (
