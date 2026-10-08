@@ -1,5 +1,10 @@
 [
   {
+    "title": "10 AM",
+    "artist": "FrostBorne",
+    "src": "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/music/10%20AM%20-%20FrostBorne.mp3"
+  },
+  {
     "title": "A Bloom on the Plains",
     "artist": "Wuthering Waves, win7mus",
     "src": "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/music/A%20Bloom%20on%20the%20Plains%20-%20Wuthering%20Waves%2C%20win7mus.mp3"
@@ -1018,6 +1023,11 @@
     "title": "When the Spring Rite Arrives",
     "artist": "MSR, Vision Sound, Salty Salt",
     "src": "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/music/When%20the%20Spring%20Rite%20Arrives%20-%20MSR%2C%20Vision%20Sound%2C%20Salty%20Salt.mp3"
+  },
+  {
+    "title": "When Will You Come Home？",
+    "artist": "M83",
+    "src": "https://cdn.jsdelivr.net/gh/IntenseParijat/cdn@main/music/When%20Will%20You%20Come%20Home%EF%BC%9F%20-%20M83.mp3"
   },
   {
     "title": "Where Dusk Comes to Rest",
